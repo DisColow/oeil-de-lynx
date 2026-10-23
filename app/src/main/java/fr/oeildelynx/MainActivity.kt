@@ -218,8 +218,8 @@ class MainActivity : ComponentActivity() {
                 val start = file.nameWithoutExtension.substringAfter("lynx_").toLongOrNull() ?: file.lastModified()
                 val duration = videoDuration(file)
                 val fmt = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
-                text.addView(TextView(this@MainActivity).apply { text = "Début : ${fmt.format(Date(start))}"; textSize = 14f })
-                text.addView(TextView(this@MainActivity).apply { text = "Fin : ${fmt.format(Date(start + duration))}"; textSize = 14f })
+                text.addView(TextView(this@MainActivity).apply { this.text = "Début : ${fmt.format(Date(start))}"; textSize = 14f })
+                text.addView(TextView(this@MainActivity).apply { this.text = "Fin : ${fmt.format(Date(start + duration))}"; textSize = 14f })
                 row.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
                 row.setOnClickListener {
                     if (selected.isNotEmpty()) { if (!selected.add(file)) selected.remove(file); delete.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE; (parent as? ListView)?.invalidateViews() }
@@ -229,7 +229,7 @@ class MainActivity : ComponentActivity() {
                 return row
             }
         }
-        val list = ListView(this).apply { adapter = adapter; dividerHeight = dp(1) }
+        val list = ListView(this).apply { setAdapter(adapter); dividerHeight = dp(1) }
         view.addView(list, LinearLayout.LayoutParams(-1, 0, 1f)); view.addView(delete)
         val dialog = AlertDialog.Builder(this).setTitle("Galerie · ${captures.size} captures").setView(view).setNegativeButton("Fermer", null).create()
         delete.setOnClickListener {
