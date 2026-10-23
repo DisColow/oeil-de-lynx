@@ -14,6 +14,7 @@ import android.os.SystemClock
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
@@ -41,12 +42,17 @@ class MonitorService : LifecycleService() {
     private var previousLuma: ByteArray? = null
     private var lastFrameAt = 0L
     private var recordingSince = 0L
+    private var maxClipMs = 10 * 60_000L
+    private var useFrontCamera = false
 
     override fun onCreate() {
         super.onCreate()
         executor = Executors.newSingleThreadExecutor()
         createChannel()
         startForeground(NOTIFICATION_ID, notification("Initialisation de la caméra"))
+        val preferences = getSharedPreferences("lynx", Context.MODE_PRIVATE)
+        maxClipMs = preferences.getInt("max_clip_ms", 600_000).toLong()
+        useFrontCamera = preferences.getBoolean("front_camera", false)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopSelf(); return }
         ProcessCameraProvider.getInstance(this).also { future ->
@@ -58,12 +64,16 @@ class MonitorService : LifecycleService() {
     private fun bindCamera(provider: ProcessCameraProvider) {
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.SD)).build()
         videoCapture = VideoCapture.withOutput(recorder)
+        val preview = Preview.Builder().build()
+        activePreview = preview
+        preview.setSurfaceProvider(previewSurfaceProvider)
         val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setTargetResolution(android.util.Size(320, 240)).build()
         analysis.setAnalyzer(executor) { image -> analyzeFrame(image) }
         try {
             provider.unbindAll()
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, videoCapture, analysis)
+            val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+            provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
         } catch (_: Exception) { stopSelf() }
     }
 
@@ -143,10 +153,11 @@ class MonitorService : LifecycleService() {
 
     private fun maybeStopRecording(now: Long) {
         if (recording == null || now - recordingSince < MIN_CLIP_MS) return
+        maxClipMs = getSharedPreferences("lynx", Context.MODE_PRIVATE).getInt("max_clip_ms", 600_000).toLong()
         val lastActivity = maxOf(lastMotionAt, lastSoundAt)
         if (now - lastActivity > QUIET_PERIOD_MS) recording?.stop()
         // Cap individual clips so a persistent trigger cannot fill storage indefinitely.
-        if (now - recordingSince > MAX_CLIP_MS) recording?.stop()
+        if (now - recordingSince > maxClipMs) recording?.stop()
     }
 
     private fun stopSoundDetection() {
@@ -167,16 +178,23 @@ class MonitorService : LifecycleService() {
 
     override fun onDestroy() {
         recording?.stop(); stopSoundDetection()
+        activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
         if (::executor.isInitialized) executor.shutdownNow()
         super.onDestroy()
     }
 
     companion object {
+        const val EXTRA_FRONT_CAMERA = "front_camera"
+        @Volatile var previewSurfaceProvider: Preview.SurfaceProvider? = null
+        @Volatile private var activePreview: Preview? = null
+        fun updatePreviewSurface(provider: Preview.SurfaceProvider?) {
+            previewSurfaceProvider = provider
+            activePreview?.setSurfaceProvider(provider)
+        }
         private const val CHANNEL_ID = "lynx-surveillance"
         private const val NOTIFICATION_ID = 42
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
-        private const val MAX_CLIP_MS = 10 * 60_000L
     }
 }
