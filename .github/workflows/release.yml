@@ -1,0 +1,33 @@
+name: Build and publish APK
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build APK
+        run: APP_VERSION="${GITHUB_REF_NAME#v}" gradle --no-daemon assembleDebug
+      - name: Prepare versioned APK
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+          cp app/build/outputs/apk/debug/app-debug.apk "release/oeil-de-lynx-${VERSION}.apk"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "release/oeil-de-lynx-${GITHUB_REF_NAME#v}.apk" --title "Œil de Lynx $GITHUB_REF_NAME" --generate-notes
