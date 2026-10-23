@@ -8,6 +8,8 @@ Application Android de surveillance locale avec clips vidéo et audio déclench�
 - Analyse audio locale à 8 kHz lorsque la caméra attend un événement.
 - Enregistrement MP4 avec audio à partir d'un déclenchement; clips segmentés au plus tard toutes les 10 minutes.
 - Stockage privé dans `Android/data/fr.oeildelynx/files/Movies/Evenements`.
+- Aperçu caméra de 10 secondes au démarrage, puis masque visuel et surveillance continue.
+- Menu Captures pour lister les clips et les ouvrir dans le lecteur vidéo du téléphone.
 - Service de premier plan avec notification permanente; aucune transmission réseau.
 
 La consommation et la température dépendent fortement du téléphone, de l'éclairage, du réseau, de la batterie et de la caméra. Une surveillance permanente ne peut pas être garantie sans chauffe sur tous les appareils. Pour une utilisation prolongée, garder l'appareil ventilé et branché, et vérifier les températures et l'arrêt automatique sur le modèle cible. Android peut également arrêter les services selon ses règles d'économie d'énergie.
