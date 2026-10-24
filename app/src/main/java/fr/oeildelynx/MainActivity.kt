@@ -21,11 +21,12 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.appcompat.widget.AppCompatImageView
 
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var mask: LinearLayout
-    private lateinit var maskButtonIcon: TextView
+    private lateinit var maskButtonIcon: ImageView
     private lateinit var maskButtonLabel: TextView
     private lateinit var previewControl: LinearLayout
     private lateinit var recordButtonIcon: TextView
@@ -112,7 +113,7 @@ class MainActivity : ComponentActivity() {
             background = gradient(0xef101713.toInt(), 0, 0, dp(22), bottom = true)
         }
         val controls = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
-        val previewAction = hudButton("◉", "Masquer caméra") { togglePreview() }
+        val previewAction = cameraHudButton("Masquer caméra") { togglePreview() }
         maskButtonIcon = previewAction.first; maskButtonLabel = previewAction.second; previewControl = previewAction.third
         controls.addView(previewControl, LinearLayout.LayoutParams(0, dp(76), 1f))
         controls.addView(hudButton("⇄", "Avant / arrière") { switchCamera() }.third, LinearLayout.LayoutParams(0, dp(76), 1f))
@@ -143,6 +144,25 @@ class MainActivity : ComponentActivity() {
     private fun hudButton(icon: String, label: String, action: () -> Unit): Triple<TextView, TextView, LinearLayout> {
         val iconView = TextView(this).apply { text = icon; textSize = 25f; gravity = Gravity.CENTER; setTextColor(Color.WHITE) }
         val labelView = TextView(this).apply { text = label; textSize = 10f; gravity = Gravity.CENTER; setTextColor(0xffc6d0c9.toInt()); maxLines = 1 }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = roundBackground(0x333b4941)
+            addView(iconView, LinearLayout.LayoutParams(-1, 0, 1f)); addView(labelView)
+            setOnClickListener { action() }
+        }
+        return Triple(iconView, labelView, container)
+    }
+
+    private fun cameraHudButton(label: String, action: () -> Unit): Triple<ImageView, TextView, LinearLayout> {
+        val iconView = AppCompatImageView(this).apply {
+            setImageResource(R.drawable.ic_camera)
+            contentDescription = label
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(25), dp(12), dp(25), dp(8))
+        }
+        val labelView = TextView(this).apply {
+            text = label; textSize = 10f; gravity = Gravity.CENTER
+            setTextColor(0xffc6d0c9.toInt()); maxLines = 1
+        }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = roundBackground(0x333b4941)
             addView(iconView, LinearLayout.LayoutParams(-1, 0, 1f)); addView(labelView)
@@ -196,7 +216,8 @@ class MainActivity : ComponentActivity() {
         previewShown = visible
         prefs.edit().putBoolean("preview_shown", visible).apply()
         mask.visibility = if (visible) View.GONE else View.VISIBLE
-        maskButtonIcon.text = if (visible) "◉̸" else "◉"
+        maskButtonIcon.setImageResource(if (visible) R.drawable.ic_camera else R.drawable.ic_camera_off)
+        maskButtonIcon.contentDescription = if (visible) "Caméra visible" else "Caméra masquée"
         maskButtonLabel.text = if (visible) "Masquer caméra" else "Afficher caméra"
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
         handler.removeCallbacks(autoHide)
@@ -236,7 +257,11 @@ class MainActivity : ComponentActivity() {
         recordButtonLabel.text = if (surveillance) "Arrêter" else "Démarrer"
         previewControl.isEnabled = surveillance
         previewControl.alpha = if (surveillance) 1f else .55f
-        if (!surveillance) { maskButtonIcon.text = "◉"; maskButtonLabel.text = "Aperçu actif" }
+        if (!surveillance) {
+            maskButtonIcon.setImageResource(R.drawable.ic_camera)
+            maskButtonIcon.contentDescription = "Caméra visible"
+            maskButtonLabel.text = "Aperçu actif"
+        }
         recBadge.visibility = if (surveillance) View.VISIBLE else View.GONE
         if (::statusLabel.isInitialized) statusLabel.text = if (surveillance) "SURVEILLANCE ACTIVE" else "PRÊT"
     }
