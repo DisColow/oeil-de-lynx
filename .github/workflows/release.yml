@@ -29,6 +29,7 @@ jobs:
         env:
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
+          # Le tag de release est la source de versionName et versionCode.
           APP_VERSION="${GITHUB_REF_NAME#v}" \
           SIGNING_KEYSTORE_FILE="$RUNNER_TEMP/oeil-de-lynx-release.p12" \
           SIGNING_PASSWORD="$SIGNING_PASSWORD" \
@@ -36,6 +37,7 @@ jobs:
       - name: Prepare versioned APK
         shell: bash
         run: |
+          # L’asset téléchargeable reste un APK dont le nom contient la version.
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
           cp app/build/outputs/apk/release/app-release.apk "release/oeil-de-lynx-${VERSION}.apk"

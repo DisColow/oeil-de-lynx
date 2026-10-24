@@ -7,8 +7,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <application android:theme="@style/AppTheme" android:label="Œil de Lynx" android:allowBackup="false">
-        <activity android:name=".MainActivity" android:exported="true">
+    <application
+        android:theme="@style/AppTheme"
+        android:label="Œil de Lynx"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false">
+        <activity android:name=".MainActivity" android:exported="true" android:theme="@style/Theme.OeilDeLynx.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

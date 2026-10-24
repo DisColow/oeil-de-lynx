@@ -22,7 +22,12 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.appcompat.widget.AppCompatImageView
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
+/**
+ * HUD caméra et commandes. Le [MonitorService] de premier plan garde la session
+ * caméra/enregistrement ; cette Activity ne possède que la surface d’aperçu visible.
+ */
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var mask: LinearLayout
@@ -34,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var statusLabel: TextView
     private lateinit var recBadge: LinearLayout
     private var provider: ProcessCameraProvider? = null
+    // L’état de l’interface est conservé dans SharedPreferences si Android recrée l’Activity.
     private var surveillance = false
     private var previewShown = true
     private var frontCamera = false
@@ -42,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("lynx", MODE_PRIVATE) }
     private val autoHide = Runnable { setPreviewVisible(false) }
 
+    // Demande les permissions ensemble, puis reprend l’action demandée par l’utilisateur.
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val granted = requiredPermissions().all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
         if (granted) {
@@ -51,6 +58,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Installe le splash AndroidX avant l’initialisation de l’Activity pour garder le même rendu dès API 29.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         frontCamera = prefs.getBoolean("front_camera", false)
@@ -58,12 +67,14 @@ class MainActivity : ComponentActivity() {
         previewShown = !surveillance || prefs.getBoolean("preview_shown", false)
         buildHud()
         if (surveillance) {
+            // Rattache la nouvelle surface d’aperçu au service déjà actif après recréation de l’Activity.
             setPreviewVisible(previewShown, scheduleHide = previewShown)
             MonitorService.updatePreviewSurface(previewView.surfaceProvider)
             showRecordingState()
         } else openPreview()
     }
 
+    /** Construit en code l’aperçu et les commandes pour occuper tout l’écran. */
     private fun buildHud() {
         val root = FrameLayout(this).apply { setBackgroundColor(0xff0d1210.toInt()) }
         previewView = PreviewView(this).apply {
@@ -72,7 +83,7 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(previewView, FrameLayout.LayoutParams(-1, -1))
 
-        // Opaque HUD shade: it covers the image without stopping the monitoring camera session.
+        // Le masque opaque recouvre l’image sans arrêter la session caméra de surveillance.
         mask = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             setBackgroundColor(0xff101713.toInt()); visibility = View.GONE
@@ -184,6 +195,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    /** Lie une session CameraX limitée à l’aperçu avant le démarrage de la surveillance. */
     private fun openPreview() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             permissionForStart = false; permissionRequest.launch(requiredPermissions().toTypedArray()); return
@@ -208,6 +220,10 @@ class MainActivity : ComponentActivity() {
         setPreviewVisible(!previewShown, scheduleHide = !previewShown)
     }
 
+    /**
+     * Masque ou affiche l’aperçu et met à jour la surface CameraX du service.
+     * Le masque ne sert qu’à l’interface ; ImageAnalysis reste lié pour détecter les mouvements.
+     */
     private fun setPreviewVisible(
         visible: Boolean,
         scheduleHide: Boolean = visible,
@@ -228,8 +244,10 @@ class MainActivity : ComponentActivity() {
         frontCamera = !frontCamera
         prefs.edit().putBoolean("front_camera", frontCamera).apply()
         if (surveillance) {
-            stopService(Intent(this, MonitorService::class.java)); surveillance = false
-            handler.postDelayed({ startMonitoring() }, 600)
+            // Demande au service de délier puis relier CameraX sans détruire la session de surveillance.
+            startService(Intent(this, MonitorService::class.java)
+                .setAction(MonitorService.ACTION_SWITCH_CAMERA)
+                .putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera))
         } else bindPreview()
     }
 
@@ -246,6 +264,7 @@ class MainActivity : ComponentActivity() {
     private fun startMonitoring() {
         prefs.edit().putBoolean("monitoring_active", true).putBoolean("preview_shown", true).apply()
         provider?.unbindAll()
+        // Transmet la surface PreviewView au service avant qu’il lie les cas d’usage CameraX.
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
         ContextCompat.startForegroundService(this, Intent(this, MonitorService::class.java).putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera))
         surveillance = true; setPreviewVisible(true, hideDelayMs = STARTUP_PREVIEW_TIMEOUT_MS); syncControls(); showRecordingState()
@@ -275,6 +294,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showRules() {
+        // Enregistre la durée en millisecondes ; le service relit cette limite pendant chaque clip.
         val durations = intArrayOf(30_000, 90_000, 180_000, 300_000, 600_000)
         val labels = arrayOf("30 secondes", "1 minute 30", "3 minutes", "5 minutes", "10 minutes")
         val selected = durations.indexOf(prefs.getInt("max_clip_ms", 600_000)).coerceAtLeast(0)
@@ -295,6 +315,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); super.onDestroy() }
 
     companion object {
+        // Après Démarrer, l’aperçu initial reste visible moins longtemps qu’un aperçu réactivé manuellement.
         private const val STARTUP_PREVIEW_TIMEOUT_MS = 5_000L
         private const val PREVIEW_TIMEOUT_MS = 90_000L
     }

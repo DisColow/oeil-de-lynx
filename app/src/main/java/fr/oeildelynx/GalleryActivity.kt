@@ -21,7 +21,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Galerie plein écran des clips partagés dans Movies et des anciens clips privés de l’application. */
 class GalleryActivity : Activity() {
+    /**
+     * Les clips actuels utilisent une URI MediaStore. [legacyFile] ne sert qu’aux clips
+     * enregistrés dans le dossier privé par les versions précédentes.
+     */
     private data class Capture(
         val uri: Uri,
         val name: String,
@@ -98,6 +103,7 @@ class GalleryActivity : Activity() {
 
     private fun reloadCaptures() {
         captures.clear()
+        // Interroge uniquement le dossier de l’application ; les autres vidéos de Movies sont exclues.
         val columns = arrayOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DISPLAY_NAME,
@@ -125,7 +131,7 @@ class GalleryActivity : Activity() {
             }
         } catch (_: Exception) { }
 
-        // Preserve clips made by older versions, which were stored in the app's private folder.
+        // Conserve l’accès aux clips créés par les anciennes versions dans le dossier privé de l’application.
         val legacy = File(getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "Evenements")
         legacy.listFiles { file -> file.isFile && file.extension.equals("mp4", true) }?.forEach { file ->
             val alreadyPublished = captures.any { it.name == file.name }
@@ -190,6 +196,7 @@ class GalleryActivity : Activity() {
     }
 
     private fun confirmDelete() {
+        // Supprimer une entrée MediaStore la retire de la liste et des applications Photos compatibles.
         AlertDialog.Builder(this).setTitle("Supprimer les vidéos ?")
             .setMessage("${selected.size} élément(s) seront supprimés définitivement.")
             .setNegativeButton("Annuler", null)

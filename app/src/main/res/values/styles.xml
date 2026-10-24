@@ -4,4 +4,11 @@
         <item name="android:colorAccent">#286B58</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <!-- Thème AndroidX : affiche l’œil de chat avant que l’Activity ne dessine son HUD. -->
+    <style name="Theme.OeilDeLynx.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/lynx_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_cat_eye_foreground</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
 </resources>

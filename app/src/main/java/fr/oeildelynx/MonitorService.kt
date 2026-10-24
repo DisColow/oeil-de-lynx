@@ -35,14 +35,23 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.sqrt
 
+/**
+ * Garde la caméra et le microphone pendant la surveillance, indépendamment de l’Activity du HUD.
+ * L’analyse d’image doit rester limitée pour les vieux téléphones utilisés longtemps.
+ */
 class MonitorService : LifecycleService() {
     private lateinit var executor: ExecutorService
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: androidx.camera.video.Recording? = null
     private var audioRecord: AudioRecord? = null
     private var audioThread: Thread? = null
+    private var cameraProvider: ProcessCameraProvider? = null
+    // Si un clip est en cours, le terminer avant de remplacer les cas d’usage CameraX.
+    private var pendingCameraFacing: Boolean? = null
+    private var shuttingDown = false
     private var lastMotionAt = 0L
     private var lastSoundAt = 0L
+    // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
     private var lastFrameAt = 0L
     private var recordingSince = 0L
@@ -60,12 +69,29 @@ class MonitorService : LifecycleService() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopSelf(); return }
         ProcessCameraProvider.getInstance(this).also { future ->
-            future.addListener({ bindCamera(future.get()) }, ContextCompat.getMainExecutor(this))
+            future.addListener({
+                cameraProvider = future.get()
+                val requestedFacing = pendingCameraFacing
+                if (requestedFacing != null) {
+                    pendingCameraFacing = null
+                    rebindCamera(requestedFacing)
+                } else if (!bindCamera(cameraProvider!!)) stopSelf()
+            }, ContextCompat.getMainExecutor(this))
         }
+        // Le son peut se déclencher avant la fin du lien CameraX ; videoCapture est vérifié au déclenchement.
         startSoundDetection()
     }
 
-    private fun bindCamera(provider: ProcessCameraProvider) {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        if (intent?.action == ACTION_SWITCH_CAMERA) {
+            requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
+        }
+        return result
+    }
+
+    /** Lie analyse, aperçu et enregistrement ensemble pour garder la détection active pendant un clip. */
+    private fun bindCamera(provider: ProcessCameraProvider): Boolean {
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.SD)).build()
         videoCapture = VideoCapture.withOutput(recorder)
         val preview = Preview.Builder().build()
@@ -74,19 +100,70 @@ class MonitorService : LifecycleService() {
         val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setTargetResolution(android.util.Size(320, 240)).build()
         analysis.setAnalyzer(executor) { image -> analyzeFrame(image) }
-        try {
+        return try {
             provider.unbindAll()
             val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
-        } catch (_: Exception) { stopSelf() }
+            true
+        } catch (_: Exception) {
+            activePreview = null
+            false
+        }
+    }
+
+    /**
+     * Relie à nouveau CameraX dans ce service, sans détruire puis recréer le service de premier plan.
+     * Si un clip est en cours, attend son callback Finalize avant de remplacer les anciens cas d’usage.
+     */
+    @Synchronized private fun requestCameraSwitch(frontCamera: Boolean) {
+        if (shuttingDown || (frontCamera == useFrontCamera && pendingCameraFacing == null)) return
+        pendingCameraFacing = frontCamera
+        if (recording != null) {
+            recording?.stop()
+            return
+        }
+        pendingCameraFacing = null
+        rebindCamera(frontCamera)
+    }
+
+    @Synchronized private fun rebindCamera(frontCamera: Boolean) {
+        val provider = cameraProvider ?: run { pendingCameraFacing = frontCamera; return }
+        val previousFacing = useFrontCamera
+        stopSoundDetection()
+        provider.unbindAll()
+        useFrontCamera = frontCamera
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean("front_camera", frontCamera).apply()
+        previousLuma = null
+        lastFrameAt = 0L
+        lastMotionAt = 0L
+        lastSoundAt = 0L
+
+        if (!bindCamera(provider)) {
+            // Si l’appareil ne possède pas cette caméra, la surveillance continue avec la caméra précédente.
+            useFrontCamera = previousFacing
+            getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean("front_camera", previousFacing).apply()
+            if (!bindCamera(provider)) {
+                stopSelf()
+                return
+            }
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID, notification("Caméra indisponible · retour à la caméra précédente")
+            )
+        } else {
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID, notification(if (frontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+            )
+        }
+        startSoundDetection()
     }
 
     private fun analyzeFrame(image: ImageProxy) {
         val now = SystemClock.elapsedRealtime()
         try {
-            // Analyze at most one low-resolution frame every 700 ms to reduce CPU use.
+            // Analyse au plus une image basse résolution toutes les 700 ms pour limiter le processeur.
             if (now - lastFrameAt < 700) return
             lastFrameAt = now
+            // Chaque image CameraX doit être fermée, même en cas de retour anticipé (voir finally).
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate(); val stride = plane.rowStride
             val pixelStride = plane.pixelStride
@@ -100,13 +177,15 @@ class MonitorService : LifecycleService() {
                     if (previous != null && samples.size < previous.size) {
                         val delta = abs((value.toInt() and 0xff) - (previous[samples.size].toInt() and 0xff))
                         difference += delta
-                        if (delta > 24) changed++
+                        if (delta > MOTION_PIXEL_DELTA) changed++
                     }
                     samples.add(value)
                 }
             }
             val compared = minOf(samples.size, previous?.size ?: 0)
-            if (compared > 0 && difference.toDouble() / compared > 10.0 && changed.toDouble() / compared > 0.12) {
+            // Le seuil moyen et la proportion de pixels modifiés filtrent les petites variations parasites.
+            if (compared > 0 && difference.toDouble() / compared > MOTION_AVERAGE_DELTA &&
+                changed.toDouble() / compared > MOTION_CHANGED_RATIO) {
                 lastMotionAt = now
                 triggerRecording("Mouvement")
             }
@@ -131,6 +210,7 @@ class MonitorService : LifecycleService() {
                     var energy = 0.0
                     for (i in 0 until n) { val v = samples[i].toDouble() / 32768.0; energy += v * v }
                     val rms = sqrt(energy / n)
+                    // Seuil RMS fixe ; l’ajuster en mesurant les niveaux du vrai téléphone si nécessaire.
                     if (rms > 0.055) { lastSoundAt = SystemClock.elapsedRealtime(); triggerRecording("Son") }
                 }
             }
@@ -140,6 +220,7 @@ class MonitorService : LifecycleService() {
     @Synchronized private fun triggerRecording(reason: String) {
         val capture = videoCapture ?: return
         if (recording != null) return
+        // Libère le micro AudioRecord pour que CameraX puisse enregistrer la piste audio du clip.
         stopSoundDetection()
         val now = System.currentTimeMillis()
         val outputName = "lynx_$now.mp4"
@@ -148,14 +229,25 @@ class MonitorService : LifecycleService() {
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
             put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Œil de Lynx")
         }
+        // Écrit dans la collection Movies partagée pour que Photos et GalleryActivity voient le même fichier.
         val options = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             .setContentValues(values).build()
         val detectionId = (now and 0x7fffffff).toInt().coerceAtLeast(NOTIFICATION_ID + 1)
         recordingSince = SystemClock.elapsedRealtime()
+        // Un seul enregistrement est autorisé ; les images de mouvement suivantes repoussent le délai de silence.
         recording = capture.output.prepareRecording(this, options)
             .withAudioEnabled().start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Finalize) {
-                    synchronized(this) { recording = null; startSoundDetection() }
+                    synchronized(this) {
+                        recording = null
+                        if (!shuttingDown) {
+                            val nextFacing = pendingCameraFacing
+                            if (nextFacing != null) {
+                                pendingCameraFacing = null
+                                rebindCamera(nextFacing)
+                            } else startSoundDetection()
+                        }
+                    }
                     if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
                     else getSystemService(NotificationManager::class.java).notify(
                         detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
@@ -172,9 +264,10 @@ class MonitorService : LifecycleService() {
     private fun maybeStopRecording(now: Long) {
         if (recording == null || now - recordingSince < MIN_CLIP_MS) return
         maxClipMs = getSharedPreferences("lynx", Context.MODE_PRIVATE).getInt("max_clip_ms", 600_000).toLong()
+        // Arrête après une période calme, tout en appliquant la durée maximale choisie pour limiter le stockage.
         val lastActivity = maxOf(lastMotionAt, lastSoundAt)
         if (now - lastActivity > QUIET_PERIOD_MS) recording?.stop()
-        // Cap individual clips so a persistent trigger cannot fill storage indefinitely.
+        // Limite chaque clip afin qu’un déclencheur permanent ne remplisse pas le stockage sans fin.
         if (now - recordingSince > maxClipMs) recording?.stop()
     }
 
@@ -198,6 +291,7 @@ class MonitorService : LifecycleService() {
         .setOngoing(true).setOnlyAlertOnce(true).build()
 
     private fun detectionNotification(message: String, fileName: String, requestCode: Int): Notification {
+        // Transmet le nom MediaStore pour que la galerie puisse retrouver le clip signalé.
         val intent = Intent(this, GalleryActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(GalleryActivity.EXTRA_FOCUS_NAME, fileName)
@@ -213,6 +307,8 @@ class MonitorService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        shuttingDown = true
+        pendingCameraFacing = null
         recording?.stop(); stopSoundDetection()
         activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
@@ -222,6 +318,8 @@ class MonitorService : LifecycleService() {
 
     companion object {
         const val EXTRA_FRONT_CAMERA = "front_camera"
+        const val ACTION_SWITCH_CAMERA = "fr.oeildelynx.action.SWITCH_CAMERA"
+        // L’Activity et le service ont des durées de vie distinctes ; volatile transmet leur surface d’aperçu.
         @Volatile var previewSurfaceProvider: Preview.SurfaceProvider? = null
         @Volatile private var activePreview: Preview? = null
         fun updatePreviewSurface(provider: Preview.SurfaceProvider?) {
@@ -233,5 +331,9 @@ class MonitorService : LifecycleService() {
         private const val NOTIFICATION_ID = 42
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
+        // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.
+        private const val MOTION_PIXEL_DELTA = 32
+        private const val MOTION_AVERAGE_DELTA = 16.0
+        private const val MOTION_CHANGED_RATIO = 0.18
     }
 }
