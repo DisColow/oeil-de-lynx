@@ -1,0 +1,262 @@
+package fr.oeildelynx
+
+import android.app.Activity
+import android.content.ContentUris
+import android.content.DialogInterface
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.os.Bundle
+import android.provider.MediaStore
+import android.util.Size
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import androidx.appcompat.app.AlertDialog
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class GalleryActivity : Activity() {
+    private data class Capture(
+        val uri: Uri,
+        val name: String,
+        val startMs: Long,
+        val durationMs: Long,
+        val legacyFile: File? = null
+    )
+
+    private val captures = mutableListOf<Capture>()
+    private val selected = linkedSetOf<String>()
+    private lateinit var root: LinearLayout
+    private lateinit var list: ListView
+    private lateinit var deleteButton: TextView
+    private lateinit var selectionCount: TextView
+    private var player: VideoView? = null
+    private var playerController: MediaController? = null
+    private var listAdapter: BaseAdapter? = null
+    private val background = Color.rgb(15, 20, 17)
+    private val card = Color.rgb(27, 35, 30)
+    private val accent = Color.rgb(140, 210, 162)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        buildGallery()
+        reloadCaptures()
+        intent.getStringExtra(EXTRA_FOCUS_NAME)?.let { name ->
+            val index = captures.indexOfFirst { it.name == name }
+            if (index >= 0) list.setSelection(index)
+        }
+    }
+
+    private fun buildGallery() {
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(background) }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(24), dp(16), dp(14)); setBackgroundColor(background)
+        }
+        val back = TextView(this).apply {
+            text = "‹"; textSize = 36f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+            setOnClickListener { finish() }
+        }
+        header.addView(back, LinearLayout.LayoutParams(dp(40), dp(48)))
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
+        heading.addView(TextView(this).apply { text = "Galerie"; textSize = 23f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
+        heading.addView(TextView(this).apply { text = "CLIPS DE SURVEILLANCE"; textSize = 10f; letterSpacing = .14f; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(3), 0, 0) })
+        header.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
+        selectionCount = TextView(this).apply { textSize = 12f; setTextColor(accent); gravity = Gravity.CENTER; visibility = View.GONE }
+        header.addView(selectionCount)
+        root.addView(header)
+
+        list = ListView(this).apply {
+            divider = null; dividerHeight = dp(9); setPadding(dp(12), dp(3), dp(12), dp(12)); clipToPadding = false
+        }
+        val empty = TextView(this).apply {
+            text = "Aucune capture pour l’instant\n\nLes vidéos détectées apparaîtront ici."
+            gravity = Gravity.CENTER; textSize = 15f; setTextColor(0xffaab5ae.toInt())
+        }
+        (list.parent as? ViewGroup)?.removeView(list)
+        root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(empty, LinearLayout.LayoutParams(-1, 0, 1f))
+        list.emptyView = empty
+
+        deleteButton = TextView(this).apply {
+            text = "Supprimer la sélection"; textSize = 14f; gravity = Gravity.CENTER
+            setTextColor(Color.WHITE); setPadding(dp(16), dp(13), dp(16), dp(13)); background = rounded(0xff9e3939.toInt(), dp(14)); visibility = View.GONE
+            setOnClickListener { confirmDelete() }
+        }
+        root.addView(deleteButton, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(6), dp(16), dp(14)) })
+        setContentView(root)
+        listAdapter = createAdapter()
+        list.adapter = listAdapter
+    }
+
+    private fun reloadCaptures() {
+        captures.clear()
+        val columns = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATE_ADDED,
+            MediaStore.Video.Media.DURATION,
+            MediaStore.MediaColumns.RELATIVE_PATH
+        )
+        try {
+            contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                columns,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf("${android.os.Environment.DIRECTORY_MOVIES}/Œil de Lynx/"),
+                "${MediaStore.Video.Media.DATE_ADDED} DESC"
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+                val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idColumn)
+                    val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    captures.add(Capture(uri, cursor.getString(nameColumn) ?: "Vidéo", cursor.getLong(dateColumn) * 1000L, cursor.getLong(durationColumn)))
+                }
+            }
+        } catch (_: Exception) { }
+
+        // Preserve clips made by older versions, which were stored in the app's private folder.
+        val legacy = File(getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "Evenements")
+        legacy.listFiles { file -> file.isFile && file.extension.equals("mp4", true) }?.forEach { file ->
+            val alreadyPublished = captures.any { it.name == file.name }
+            if (!alreadyPublished) {
+                val started = file.nameWithoutExtension.substringAfter("lynx_").toLongOrNull() ?: file.lastModified()
+                captures.add(Capture(Uri.fromFile(file), file.name, started, duration(file), file))
+            }
+        }
+        captures.sortByDescending { it.startMs }
+        listAdapter?.notifyDataSetChanged()
+    }
+
+    private fun createAdapter() = object : BaseAdapter() {
+        override fun getCount() = captures.size
+        override fun getItem(position: Int) = captures[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val capture = captures[position]
+            val key = capture.name
+            val row = LinearLayout(this@GalleryActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(10), dp(12), dp(10))
+                background = rounded(if (selected.contains(key)) 0xff304b39.toInt() else card, dp(16))
+            }
+            val thumb = ImageView(this@GalleryActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff222a25.toInt())
+            }
+            try {
+                if (capture.legacyFile == null) thumb.setImageBitmap(contentResolver.loadThumbnail(capture.uri, Size(dp(144), dp(104)), null))
+                else MediaMetadataRetriever().use { it.setDataSource(capture.legacyFile.absolutePath); thumb.setImageBitmap(it.getFrameAtTime(0)) }
+            } catch (_: Exception) { }
+            row.addView(thumb, LinearLayout.LayoutParams(dp(102), dp(76)))
+
+            val details = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0) }
+            val formatter = SimpleDateFormat("dd/MM/yyyy · HH:mm:ss", Locale.getDefault())
+            details.addView(TextView(this@GalleryActivity).apply {
+                text = "Début  ${formatter.format(Date(capture.startMs))}"; textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            })
+            details.addView(TextView(this@GalleryActivity).apply {
+                text = "Fin      ${formatter.format(Date(capture.startMs + capture.durationMs))}"; textSize = 12f; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(7), 0, 0)
+            })
+            details.addView(TextView(this@GalleryActivity).apply {
+                text = "VIDÉO  ·  ${formatDuration(capture.durationMs)}"; textSize = 10f; letterSpacing = .1f; setTextColor(accent); setPadding(0, dp(7), 0, 0)
+            })
+            row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
+            row.setOnClickListener {
+                if (selected.isNotEmpty()) toggleSelection(capture)
+                else play(capture)
+            }
+            row.setOnLongClickListener { toggleSelection(capture); true }
+            return row
+        }
+    }
+
+    private fun toggleSelection(capture: Capture) {
+        if (!selected.add(capture.name)) selected.remove(capture.name)
+        deleteButton.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE
+        selectionCount.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE
+        selectionCount.text = "${selected.size} sélectionné(s)"
+        listAdapter?.notifyDataSetChanged()
+    }
+
+    private fun confirmDelete() {
+        AlertDialog.Builder(this).setTitle("Supprimer les vidéos ?")
+            .setMessage("${selected.size} élément(s) seront supprimés définitivement.")
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Supprimer") { _: DialogInterface, _: Int ->
+                captures.filter { selected.contains(it.name) }.forEach { capture ->
+                    try {
+                        if (capture.legacyFile != null) capture.legacyFile.delete()
+                        else contentResolver.delete(capture.uri, null, null)
+                    } catch (_: Exception) { }
+                }
+                selected.clear(); deleteButton.visibility = View.GONE; selectionCount.visibility = View.GONE
+                reloadCaptures()
+            }.show()
+    }
+
+    private fun play(capture: Capture) {
+        player?.stopPlayback(); playerController?.hide()
+        root.removeAllViews()
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(20), dp(16), dp(12)) }
+        header.addView(TextView(this).apply {
+            text = "‹"; textSize = 36f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setOnClickListener { showList() }
+        }, LinearLayout.LayoutParams(dp(42), dp(48)))
+        header.addView(TextView(this).apply {
+            text = "LECTURE"; textSize = 13f; letterSpacing = .12f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); setPadding(dp(8), 0, 0, 0)
+        })
+        root.addView(header)
+
+        val video = VideoView(this).apply { setBackgroundColor(Color.BLACK) }
+        player = video
+        root.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
+        val info = TextView(this).apply {
+            val formatter = SimpleDateFormat("EEEE d MMMM yyyy · HH:mm:ss", Locale.getDefault())
+            text = "Début de la capture\n${formatter.format(Date(capture.startMs))}"
+            textSize = 13f; setTextColor(0xffd1dad4.toInt()); gravity = Gravity.CENTER; setPadding(dp(16), dp(18), dp(16), dp(22))
+        }
+        root.addView(info)
+        val controller = MediaController(this)
+        controller.setAnchorView(video); video.setMediaController(controller); playerController = controller
+        video.setVideoURI(capture.uri)
+        video.setOnPreparedListener { it.isLooping = false; video.start(); controller.show(3000) }
+        video.setOnErrorListener { _, _, _ -> Toast.makeText(this, "Impossible de lire cette vidéo.", Toast.LENGTH_SHORT).show(); true }
+    }
+
+    private fun showList() {
+        player?.stopPlayback(); player = null; playerController = null
+        root.removeAllViews(); setContentView(root)
+        buildGallery()
+        reloadCaptures()
+    }
+
+    private fun duration(file: File): Long = try {
+        MediaMetadataRetriever().use { it.setDataSource(file.absolutePath); it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L }
+    } catch (_: Exception) { 0L }
+
+    private fun formatDuration(millis: Long): String {
+        val total = millis.coerceAtLeast(0) / 1000
+        return String.format(Locale.getDefault(), "%02d:%02d", total / 60, total % 60)
+    }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = radius.toFloat(); setColor(color) }
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    override fun onBackPressed() {
+        if (player != null) showList() else super.onBackPressed()
+    }
+
+    override fun onDestroy() { player?.stopPlayback(); super.onDestroy() }
+
+    companion object { const val EXTRA_FOCUS_NAME = "focus_capture_name" }
+}

@@ -4,19 +4,24 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
@@ -25,7 +30,6 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
-import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
@@ -137,15 +141,29 @@ class MonitorService : LifecycleService() {
         val capture = videoCapture ?: return
         if (recording != null) return
         stopSoundDetection()
-        val dir = File(getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "Evenements").apply { mkdirs() }
-        val output = File(dir, "lynx_${System.currentTimeMillis()}.mp4")
+        val now = System.currentTimeMillis()
+        val outputName = "lynx_$now.mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, outputName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Œil de Lynx")
+        }
+        val options = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+            .setContentValues(values).build()
+        val detectionId = (now and 0x7fffffff).toInt().coerceAtLeast(NOTIFICATION_ID + 1)
         recordingSince = SystemClock.elapsedRealtime()
-        recording = capture.output.prepareRecording(this, FileOutputOptions.Builder(output).build())
+        recording = capture.output.prepareRecording(this, options)
             .withAudioEnabled().start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Finalize) {
                     synchronized(this) { recording = null; startSoundDetection() }
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Actif · dernier clip: ${output.name}"))
+                    if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
+                    else getSystemService(NotificationManager::class.java).notify(
+                        detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
+                    )
                 } else if (event is VideoRecordEvent.Start) {
+                    getSystemService(NotificationManager::class.java).notify(
+                        detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
+                    )
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Enregistrement · $reason"))
                 }
             }
@@ -169,12 +187,30 @@ class MonitorService : LifecycleService() {
     }
 
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(CHANNEL_ID, "Surveillance", NotificationManager.IMPORTANCE_LOW))
+        if (Build.VERSION.SDK_INT >= 26) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Surveillance", NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(DETECTION_CHANNEL_ID, "Détections", NotificationManager.IMPORTANCE_DEFAULT))
+        }
     }
     private fun notification(message: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Œil de Lynx").setContentText(message)
         .setOngoing(true).setOnlyAlertOnce(true).build()
+
+    private fun detectionNotification(message: String, fileName: String, requestCode: Int): Notification {
+        val intent = Intent(this, GalleryActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(GalleryActivity.EXTRA_FOCUS_NAME, fileName)
+        val pendingIntent = PendingIntent.getActivity(
+            this, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, DETECTION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentTitle("Activité détectée")
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$message\nVidéo dans Photos > Œil de Lynx et dans la galerie de l’application."))
+            .setContentIntent(pendingIntent).setAutoCancel(true).setOnlyAlertOnce(true).build()
+    }
 
     override fun onDestroy() {
         recording?.stop(); stopSoundDetection()
@@ -193,6 +229,7 @@ class MonitorService : LifecycleService() {
             activePreview?.setSurfaceProvider(provider)
         }
         private const val CHANNEL_ID = "lynx-surveillance"
+        private const val DETECTION_CHANNEL_ID = "lynx-detections"
         private const val NOTIFICATION_ID = 42
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
