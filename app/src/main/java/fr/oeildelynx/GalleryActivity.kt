@@ -55,10 +55,10 @@ class GalleryActivity : Activity() {
     }
 
     private fun buildGallery() {
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(background) }
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(this@GalleryActivity.background) }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(24), dp(16), dp(14)); setBackgroundColor(background)
+            setPadding(dp(16), dp(24), dp(16), dp(14)); setBackgroundColor(this@GalleryActivity.background)
         }
         val back = TextView(this).apply {
             text = "‹"; textSize = 36f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)

@@ -26,6 +26,22 @@ android {
         versionCode = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
         versionName = version
     }
+
+    signingConfigs {
+        create("release") {
+            System.getenv("SIGNING_KEYSTORE_FILE")?.let { storeFile = file(it) }
+            storePassword = System.getenv("SIGNING_PASSWORD")
+            keyAlias = "oeil-de-lynx-release"
+            keyPassword = System.getenv("SIGNING_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+        }
+    }
 }
 
 dependencies {
