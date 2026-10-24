@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
         // Installe le splash AndroidX avant l’initialisation de l’Activity pour garder le même rendu dès API 29.
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        enableImmersiveMode()
         frontCamera = prefs.getBoolean("front_camera", false)
         surveillance = prefs.getBoolean("monitoring_active", false)
         previewShown = !surveillance || prefs.getBoolean("preview_shown", false)
@@ -350,9 +350,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        enableImmersiveMode()
         surveillance = prefs.getBoolean("monitoring_active", surveillance)
         frontCamera = prefs.getBoolean("front_camera", frontCamera)
         syncControls()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) enableImmersiveMode()
     }
 
     override fun onDestroy() {

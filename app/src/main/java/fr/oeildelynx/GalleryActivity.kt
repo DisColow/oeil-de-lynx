@@ -50,13 +50,23 @@ class GalleryActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        enableImmersiveMode()
         buildGallery()
         reloadCaptures()
         intent.getStringExtra(EXTRA_FOCUS_NAME)?.let { name ->
             val index = captures.indexOfFirst { it.name == name }
             if (index >= 0) list.setSelection(index)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        enableImmersiveMode()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) enableImmersiveMode()
     }
 
     private fun buildGallery() {
