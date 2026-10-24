@@ -33,7 +33,7 @@ jobs:
           APP_VERSION="${GITHUB_REF_NAME#v}" \
           SIGNING_KEYSTORE_FILE="$RUNNER_TEMP/oeil-de-lynx-release.p12" \
           SIGNING_PASSWORD="$SIGNING_PASSWORD" \
-          gradle --no-daemon assembleRelease
+          gradle --no-daemon testDebugUnitTest lintDebug assembleRelease
       - name: Prepare versioned APK
         shell: bash
         run: |

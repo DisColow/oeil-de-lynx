@@ -32,7 +32,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
@@ -167,41 +166,35 @@ class MonitorService : LifecycleService() {
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate(); val stride = plane.rowStride
             val pixelStride = plane.pixelStride
-            val samples = ArrayList<Byte>(900)
-            var changed = 0; var difference = 0L
-            val previous = previousLuma
+            // Stocke les octets directement : évite le boxing de Byte sur chaque pixel échantillonné.
+            val capacity = ((image.height - 4 + 7) / 8) * ((image.width - 4 + 7) / 8)
+            val samples = ByteArray(capacity)
+            var sampleCount = 0
             for (y in 4 until image.height step 8) for (x in 4 until image.width step 8) {
                 val index = y * stride + x * pixelStride
-                if (index < buffer.limit()) {
-                    val value = buffer.get(index)
-                    if (previous != null && samples.size < previous.size) {
-                        val delta = abs((value.toInt() and 0xff) - (previous[samples.size].toInt() and 0xff))
-                        difference += delta
-                        if (delta > MOTION_PIXEL_DELTA) changed++
-                    }
-                    samples.add(value)
-                }
+                if (index < buffer.limit() && sampleCount < samples.size) samples[sampleCount++] = buffer.get(index)
             }
-            val compared = minOf(samples.size, previous?.size ?: 0)
-            // Le seuil moyen et la proportion de pixels modifiés filtrent les petites variations parasites.
-            if (compared > 0 && difference.toDouble() / compared > MOTION_AVERAGE_DELTA &&
-                changed.toDouble() / compared > MOTION_CHANGED_RATIO) {
+            val currentSamples = samples.copyOf(sampleCount)
+            val previous = previousLuma
+            if (previous != null && MotionDetector.hasMotion(currentSamples, previous)) {
                 lastMotionAt = now
                 triggerRecording("Mouvement")
             }
-            previousLuma = samples.toByteArray()
+            previousLuma = currentSamples
             maybeStopRecording(now)
         } finally { image.close() }
     }
 
     private fun startSoundDetection() {
         if (recording != null || audioRecord != null) return
+        // La permission peut être révoquée depuis les réglages pendant la vie du service.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         val min = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) return
         val rec = try { AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 4096)) } catch (_: Exception) { return }
         if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return }
+        try { rec.startRecording() } catch (_: SecurityException) { rec.release(); return }
         audioRecord = rec
-        rec.startRecording()
         audioThread = Thread {
             val samples = ShortArray(1024)
             while (!Thread.currentThread().isInterrupted && audioRecord === rec && rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -220,6 +213,7 @@ class MonitorService : LifecycleService() {
     @Synchronized private fun triggerRecording(reason: String) {
         val capture = videoCapture ?: return
         if (recording != null) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         // Libère le micro AudioRecord pour que CameraX puisse enregistrer la piste audio du clip.
         stopSoundDetection()
         val now = System.currentTimeMillis()
@@ -235,30 +229,36 @@ class MonitorService : LifecycleService() {
         val detectionId = (now and 0x7fffffff).toInt().coerceAtLeast(NOTIFICATION_ID + 1)
         recordingSince = SystemClock.elapsedRealtime()
         // Un seul enregistrement est autorisé ; les images de mouvement suivantes repoussent le délai de silence.
-        recording = capture.output.prepareRecording(this, options)
-            .withAudioEnabled().start(ContextCompat.getMainExecutor(this)) { event ->
-                if (event is VideoRecordEvent.Finalize) {
-                    synchronized(this) {
-                        recording = null
-                        if (!shuttingDown) {
-                            val nextFacing = pendingCameraFacing
-                            if (nextFacing != null) {
-                                pendingCameraFacing = null
-                                rebindCamera(nextFacing)
-                            } else startSoundDetection()
+        recording = try {
+            capture.output.prepareRecording(this, options)
+                .withAudioEnabled().start(ContextCompat.getMainExecutor(this)) { event ->
+                    if (event is VideoRecordEvent.Finalize) {
+                        synchronized(this) {
+                            recording = null
+                            if (!shuttingDown) {
+                                val nextFacing = pendingCameraFacing
+                                if (nextFacing != null) {
+                                    pendingCameraFacing = null
+                                    rebindCamera(nextFacing)
+                                } else startSoundDetection()
+                            }
                         }
+                        if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
+                        else getSystemService(NotificationManager::class.java).notify(
+                            detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
+                        )
+                    } else if (event is VideoRecordEvent.Start) {
+                        getSystemService(NotificationManager::class.java).notify(
+                            detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
+                        )
+                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Enregistrement · $reason"))
                     }
-                    if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
-                    else getSystemService(NotificationManager::class.java).notify(
-                        detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
-                    )
-                } else if (event is VideoRecordEvent.Start) {
-                    getSystemService(NotificationManager::class.java).notify(
-                        detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
-                    )
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Enregistrement · $reason"))
                 }
-            }
+        } catch (_: SecurityException) {
+            // Une permission révoquée au même instant qu’un déclenchement ne doit pas tuer le service.
+            startSoundDetection()
+            return
+        }
     }
 
     private fun maybeStopRecording(now: Long) {
@@ -332,8 +332,5 @@ class MonitorService : LifecycleService() {
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
         // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.
-        private const val MOTION_PIXEL_DELTA = 32
-        private const val MOTION_AVERAGE_DELTA = 16.0
-        private const val MOTION_CHANGED_RATIO = 0.18
     }
 }
