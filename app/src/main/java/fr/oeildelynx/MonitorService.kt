@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -56,9 +57,11 @@ class MonitorService : LifecycleService() {
     private var recordingSince = 0L
     private var maxClipMs = 10 * 60_000L
     private var useFrontCamera = false
+    private var stopReason: String? = null
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "Surveillance service created")
         executor = Executors.newSingleThreadExecutor()
         createChannel()
         startForeground(NOTIFICATION_ID, notification("Initialisation de la caméra"))
@@ -66,15 +69,31 @@ class MonitorService : LifecycleService() {
         maxClipMs = preferences.getInt("max_clip_ms", 600_000).toLong()
         useFrontCamera = preferences.getBoolean("front_camera", false)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { stopSelf(); return }
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "Cannot start surveillance: camera or microphone permission is missing")
+            stopWithFailure("Autorise la caméra et le micro pour démarrer la surveillance."); return
+        }
         ProcessCameraProvider.getInstance(this).also { future ->
             future.addListener({
-                cameraProvider = future.get()
-                val requestedFacing = pendingCameraFacing
-                if (requestedFacing != null) {
-                    pendingCameraFacing = null
-                    rebindCamera(requestedFacing)
-                } else if (!bindCamera(cameraProvider!!)) stopSelf()
+                try {
+                    cameraProvider = future.get()
+                    val requestedFacing = pendingCameraFacing
+                    if (requestedFacing != null) {
+                        pendingCameraFacing = null
+                        rebindCamera(requestedFacing)
+                    } else if (bindCamera(cameraProvider!!)) {
+                        getSystemService(NotificationManager::class.java).notify(
+                            NOTIFICATION_ID, notification(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+                        )
+                        publishMonitorState(active = true)
+                    } else {
+                        Log.e(TAG, "Initial CameraX binding failed for ${if (useFrontCamera) "front" else "back"} camera")
+                        stopWithFailure("Impossible d’ouvrir la caméra. Vérifie ses autorisations et réessaie.")
+                    }
+                } catch (error: Exception) {
+                    Log.e(TAG, "Could not initialize CameraX", error)
+                    stopWithFailure("Impossible d’initialiser la caméra. Réessaie après avoir fermé les autres applications caméra.")
+                }
             }, ContextCompat.getMainExecutor(this))
         }
         // Le son peut se déclencher avant la fin du lien CameraX ; videoCapture est vérifié au déclenchement.
@@ -83,6 +102,7 @@ class MonitorService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val result = super.onStartCommand(intent, flags, startId)
+        Log.i(TAG, "Service start command: ${intent?.action ?: "START"}")
         if (intent?.action == ACTION_SWITCH_CAMERA) {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
         }
@@ -91,7 +111,9 @@ class MonitorService : LifecycleService() {
 
     /** Lie analyse, aperçu et enregistrement ensemble pour garder la détection active pendant un clip. */
     private fun bindCamera(provider: ProcessCameraProvider): Boolean {
-        val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.SD)).build()
+        // Demande SD pour limiter chauffe et stockage, avec LOWEST comme repli sur les appareils atypiques.
+        val quality = QualitySelector.fromOrderedList(listOf(Quality.SD, Quality.LOWEST))
+        val recorder = Recorder.Builder().setQualitySelector(quality).build()
         videoCapture = VideoCapture.withOutput(recorder)
         val preview = Preview.Builder().build()
         activePreview = preview
@@ -103,9 +125,11 @@ class MonitorService : LifecycleService() {
             provider.unbindAll()
             val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
+            Log.i(TAG, "CameraX bound to ${if (useFrontCamera) "front" else "back"} camera")
             true
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             activePreview = null
+            Log.e(TAG, "CameraX use-case binding failed for ${if (useFrontCamera) "front" else "back"} camera", error)
             false
         }
     }
@@ -142,16 +166,18 @@ class MonitorService : LifecycleService() {
             useFrontCamera = previousFacing
             getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean("front_camera", previousFacing).apply()
             if (!bindCamera(provider)) {
-                stopSelf()
+                stopWithFailure("Aucune caméra disponible pour la surveillance. Vérifie les autorisations puis réessaie.")
                 return
             }
             getSystemService(NotificationManager::class.java).notify(
                 NOTIFICATION_ID, notification("Caméra indisponible · retour à la caméra précédente")
             )
+            publishMonitorState(active = true, message = "Caméra indisponible, retour à la caméra précédente.")
         } else {
             getSystemService(NotificationManager::class.java).notify(
                 NOTIFICATION_ID, notification(if (frontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
             )
+            publishMonitorState(active = true)
         }
         startSoundDetection()
     }
@@ -313,12 +339,37 @@ class MonitorService : LifecycleService() {
         activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
         if (::executor.isInitialized) executor.shutdownNow()
+        val wasActive = getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean("monitoring_active", false)
+        if (wasActive || stopReason != null) {
+            publishMonitorState(active = false, message = stopReason)
+        }
         super.onDestroy()
+    }
+
+    /** Efface l’état actif ; le message d’erreur sera envoyé après le nettoyage du service. */
+    private fun stopWithFailure(message: String) {
+        stopReason = message
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit()
+            .putBoolean("monitoring_active", false).putBoolean("preview_shown", true).apply()
+        stopSelf()
+    }
+
+    /** Publie l’état CameraX réel pour que le HUD reste synchronisé avec le service. */
+    private fun publishMonitorState(active: Boolean, message: String? = null) {
+        val preferences = getSharedPreferences("lynx", Context.MODE_PRIVATE)
+        preferences.edit().putBoolean("monitoring_active", active)
+            .apply { if (!active) putBoolean("preview_shown", true) }.apply()
+        sendBroadcast(Intent(ACTION_MONITOR_STATE_CHANGED).setPackage(packageName)
+            .putExtra(EXTRA_MONITORING_ACTIVE, active)
+            .putExtra(EXTRA_MONITOR_MESSAGE, message))
     }
 
     companion object {
         const val EXTRA_FRONT_CAMERA = "front_camera"
         const val ACTION_SWITCH_CAMERA = "fr.oeildelynx.action.SWITCH_CAMERA"
+        const val ACTION_MONITOR_STATE_CHANGED = "fr.oeildelynx.action.MONITOR_STATE_CHANGED"
+        const val EXTRA_MONITORING_ACTIVE = "monitoring_active"
+        const val EXTRA_MONITOR_MESSAGE = "monitor_message"
         // L’Activity et le service ont des durées de vie distinctes ; volatile transmet leur surface d’aperçu.
         @Volatile var previewSurfaceProvider: Preview.SurfaceProvider? = null
         @Volatile private var activePreview: Preview? = null
@@ -329,6 +380,7 @@ class MonitorService : LifecycleService() {
         private const val CHANNEL_ID = "lynx-surveillance"
         private const val DETECTION_CHANNEL_ID = "lynx-detections"
         private const val NOTIFICATION_ID = 42
+        private const val TAG = "LynxMonitor"
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
         // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.

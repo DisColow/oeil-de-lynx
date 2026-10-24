@@ -2,7 +2,7 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.4.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.4.2`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
 Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.4.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
@@ -20,7 +20,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 
 ## Comportement et limites
 
-Le détecteur vidéo analyse une image réduite de 320 × 240 au plus une fois toutes les 700 ms. Il compare des échantillons de luminance entre deux images. Une détection demande désormais un écart moyen supérieur à 16 niveaux, au moins 18 % d’échantillons modifiés et un écart individuel supérieur à 32. Ces seuils plus stricts réduisent les faux positifs ; ils restent à calibrer selon le cadrage et le capteur du téléphone.
+Le détecteur vidéo analyse une image réduite de 320 × 240 au plus une fois toutes les 700 ms. Il compare des échantillons de luminance entre deux images. Une détection demande désormais un écart moyen supérieur à 16 niveaux, au moins 18 % d’échantillons modifiés et un écart individuel supérieur à 32. Ces seuils plus stricts réduisent les faux positifs ; ils restent à calibrer selon le cadrage et le capteur du téléphone. L’enregistreur demande une qualité SD pour limiter chauffe et stockage, puis utilise la plus basse qualité proposée par la caméra si SD n’est pas disponible.
 
 Le détecteur sonore lit le microphone en mono à 8 kHz et déclenche sur un niveau RMS fixe. Pendant un clip, l’analyse sonore est suspendue ; la piste audio du clip, elle, est enregistrée. Une capture s’arrête après au moins 5 secondes lorsqu’il n’y a plus d’activité pendant 12 secondes, ou lorsqu’elle atteint la durée maximale choisie. Un seul clip est enregistré à la fois.
 
@@ -46,7 +46,7 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 ### Cycle d’une capture
 
 1. `MainActivity` demande les permissions caméra, microphone et notifications, puis démarre `MonitorService`.
-2. Le service lie ensemble CameraX `Preview`, `ImageAnalysis` et `VideoCapture` sur la caméra choisie.
+2. Le service lie ensemble CameraX `Preview`, `ImageAnalysis` et `VideoCapture` sur la caméra choisie, puis confirme son état à l’interface. Si la liaison CameraX échoue, le HUD revient à l’état prêt et explique l’erreur au lieu d’afficher une surveillance active fictive.
 3. Le détecteur vidéo échantillonne les images sur un exécuteur dédié ; le détecteur audio lit le microphone sur son propre thread.
 4. Au premier déclencheur, le service démarre une capture audio/vidéo dans `Movies/Œil de Lynx`. Les nouveaux mouvements repoussent la fin du clip courant au lieu d’en créer un second ; l’analyse du son reprend à la fin du clip.
 5. À la fin, le service publie/met à jour la notification. La galerie interroge `MediaStore` pour afficher la vidéo et la rendre lisible dans Photos.

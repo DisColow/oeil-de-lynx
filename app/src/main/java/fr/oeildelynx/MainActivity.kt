@@ -1,7 +1,10 @@
 package fr.oeildelynx
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -44,9 +47,30 @@ class MainActivity : ComponentActivity() {
     private var previewShown = true
     private var frontCamera = false
     private var permissionForStart = false
+    private var monitorReceiverRegistered = false
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("lynx", MODE_PRIVATE) }
     private val autoHide = Runnable { setPreviewVisible(false) }
+    // Le service confirme l’état réel de CameraX ; le HUD se corrige aussi si la liaison échoue.
+    private val monitorStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            surveillance = intent.getBooleanExtra(MonitorService.EXTRA_MONITORING_ACTIVE, false)
+            frontCamera = prefs.getBoolean("front_camera", frontCamera)
+            if (surveillance) {
+                syncControls()
+                showRecordingState()
+                return
+            }
+
+            handler.removeCallbacks(autoHide)
+            previewShown = true
+            mask.visibility = View.GONE
+            MonitorService.updatePreviewSurface(null)
+            bindPreview()
+            syncControls()
+            intent.getStringExtra(MonitorService.EXTRA_MONITOR_MESSAGE)?.let { toast(it) }
+        }
+    }
 
     // Demande les permissions ensemble, puis reprend l’action demandée par l’utilisateur.
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -66,10 +90,18 @@ class MainActivity : ComponentActivity() {
         surveillance = prefs.getBoolean("monitoring_active", false)
         previewShown = !surveillance || prefs.getBoolean("preview_shown", false)
         buildHud()
+        ContextCompat.registerReceiver(
+            this, monitorStateReceiver, IntentFilter(MonitorService.ACTION_MONITOR_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        monitorReceiverRegistered = true
         if (surveillance) {
             // Rattache la nouvelle surface d’aperçu au service déjà actif après recréation de l’Activity.
             setPreviewVisible(previewShown, scheduleHide = previewShown)
             MonitorService.updatePreviewSurface(previewView.surfaceProvider)
+            // Si Android a tué le service avec le processus, relance la surveillance voulue par l’utilisateur.
+            ContextCompat.startForegroundService(
+                this, Intent(this, MonitorService::class.java).putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera)
+            )
             showRecordingState()
         } else openPreview()
     }
@@ -266,7 +298,17 @@ class MainActivity : ComponentActivity() {
         provider?.unbindAll()
         // Transmet la surface PreviewView au service avant qu’il lie les cas d’usage CameraX.
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
-        ContextCompat.startForegroundService(this, Intent(this, MonitorService::class.java).putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera))
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, MonitorService::class.java).putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera))
+        } catch (_: Exception) {
+            prefs.edit().putBoolean("monitoring_active", false).putBoolean("preview_shown", true).apply()
+            surveillance = false
+            MonitorService.updatePreviewSurface(null)
+            bindPreview()
+            syncControls()
+            toast("Impossible de démarrer la surveillance. Réessaie depuis l’application.")
+            return
+        }
         surveillance = true; setPreviewVisible(true, hideDelayMs = STARTUP_PREVIEW_TIMEOUT_MS); syncControls(); showRecordingState()
     }
 
@@ -309,10 +351,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         surveillance = prefs.getBoolean("monitoring_active", surveillance)
+        frontCamera = prefs.getBoolean("front_camera", frontCamera)
         syncControls()
     }
 
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); super.onDestroy() }
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        if (monitorReceiverRegistered) unregisterReceiver(monitorStateReceiver)
+        super.onDestroy()
+    }
 
     companion object {
         // Après Démarrer, l’aperçu initial reste visible moins longtemps qu’un aperçu réactivé manuellement.
