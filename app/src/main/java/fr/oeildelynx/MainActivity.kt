@@ -188,7 +188,11 @@ class MainActivity : ComponentActivity() {
         setPreviewVisible(!previewShown, scheduleHide = !previewShown)
     }
 
-    private fun setPreviewVisible(visible: Boolean, scheduleHide: Boolean = visible) {
+    private fun setPreviewVisible(
+        visible: Boolean,
+        scheduleHide: Boolean = visible,
+        hideDelayMs: Long = PREVIEW_TIMEOUT_MS
+    ) {
         previewShown = visible
         prefs.edit().putBoolean("preview_shown", visible).apply()
         mask.visibility = if (visible) View.GONE else View.VISIBLE
@@ -196,7 +200,7 @@ class MainActivity : ComponentActivity() {
         maskButtonLabel.text = if (visible) "Masquer caméra" else "Afficher caméra"
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
         handler.removeCallbacks(autoHide)
-        if (visible && surveillance && scheduleHide) handler.postDelayed(autoHide, PREVIEW_TIMEOUT_MS)
+        if (visible && surveillance && scheduleHide) handler.postDelayed(autoHide, hideDelayMs)
     }
 
     private fun switchCamera() {
@@ -219,11 +223,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startMonitoring() {
-        prefs.edit().putBoolean("monitoring_active", true).putBoolean("preview_shown", false).apply()
+        prefs.edit().putBoolean("monitoring_active", true).putBoolean("preview_shown", true).apply()
         provider?.unbindAll()
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
         ContextCompat.startForegroundService(this, Intent(this, MonitorService::class.java).putExtra(MonitorService.EXTRA_FRONT_CAMERA, frontCamera))
-        surveillance = true; setPreviewVisible(false); syncControls(); showRecordingState()
+        surveillance = true; setPreviewVisible(true, hideDelayMs = STARTUP_PREVIEW_TIMEOUT_MS); syncControls(); showRecordingState()
     }
 
     private fun syncControls() {
@@ -265,5 +269,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); super.onDestroy() }
 
-    companion object { private const val PREVIEW_TIMEOUT_MS = 90_000L }
+    companion object {
+        private const val STARTUP_PREVIEW_TIMEOUT_MS = 5_000L
+        private const val PREVIEW_TIMEOUT_MS = 90_000L
+    }
 }
