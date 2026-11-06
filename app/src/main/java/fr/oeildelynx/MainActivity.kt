@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private var frontCamera = false
     private var permissionForStart = false
     private var monitorReceiverRegistered = false
+    private var liveViewers = 0
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("lynx", MODE_PRIVATE) }
     private val autoHide = Runnable { setPreviewVisible(false) }
@@ -72,6 +73,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Nombre de téléphones spectateurs qui regardent le direct, affiché dans la pastille d’état.
+    private val liveViewersReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            liveViewers = intent.getIntExtra(MonitorService.EXTRA_LIVE_VIEWERS, 0)
+            syncControls()
+        }
+    }
+
     // Demande les permissions ensemble, puis reprend l’action demandée par l’utilisateur.
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val granted = requiredPermissions().all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
@@ -92,6 +101,9 @@ class MainActivity : ComponentActivity() {
         buildHud()
         ContextCompat.registerReceiver(
             this, monitorStateReceiver, IntentFilter(MonitorService.ACTION_MONITOR_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        ContextCompat.registerReceiver(
+            this, liveViewersReceiver, IntentFilter(MonitorService.ACTION_LIVE_VIEWERS_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
         )
         monitorReceiverRegistered = true
         if (surveillance) {
@@ -137,8 +149,8 @@ class MainActivity : ComponentActivity() {
         top.addView(statusPill())
         val settings = TextView(this).apply {
             text = "⚙"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-            background = roundBackground(0x553b4941); contentDescription = "Règles"
-            setOnClickListener { showRules() }
+            background = roundBackground(0x553b4941); contentDescription = "Menu"
+            setOnClickListener { showMenu() }
         }
         top.addView(settings, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(10) })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
@@ -324,7 +336,12 @@ class MainActivity : ComponentActivity() {
             maskButtonLabel.text = "Aperçu actif"
         }
         recBadge.visibility = if (surveillance) View.VISIBLE else View.GONE
-        if (::statusLabel.isInitialized) statusLabel.text = if (surveillance) "SURVEILLANCE ACTIVE" else "PRÊT"
+        if (!surveillance) liveViewers = 0
+        if (::statusLabel.isInitialized) statusLabel.text = when {
+            surveillance && liveViewers > 0 -> "EN DIRECT · $liveViewers"
+            surveillance -> "SURVEILLANCE ACTIVE"
+            else -> "PRÊT"
+        }
     }
 
     private fun showRecordingState() {
@@ -333,6 +350,22 @@ class MainActivity : ComponentActivity() {
         recBadge.animate().alpha(.35f).setDuration(650).withEndAction {
             if (surveillance) recBadge.animate().alpha(1f).setDuration(650).withEndAction { showRecordingState() }
         }
+    }
+
+    /** Menu ⚙ : réglages des clips, appairage côté caméra et mode spectateur. */
+    private fun showMenu() {
+        val entries = arrayOf(
+            "Durée maximale des clips",
+            "Appairer un téléphone spectateur (direct)",
+            "Regarder une caméra (ce téléphone devient spectateur)"
+        )
+        AlertDialog.Builder(this).setTitle("Œil de Lynx").setItems(entries) { _, which ->
+            when (which) {
+                0 -> showRules()
+                1 -> startActivity(Intent(this, PairingActivity::class.java))
+                2 -> startActivity(Intent(this, ViewerActivity::class.java))
+            }
+        }.setNegativeButton("Fermer", null).show()
     }
 
     private fun showRules() {
@@ -363,7 +396,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        if (monitorReceiverRegistered) unregisterReceiver(monitorStateReceiver)
+        if (monitorReceiverRegistered) {
+            unregisterReceiver(monitorStateReceiver)
+            unregisterReceiver(liveViewersReceiver)
+        }
         super.onDestroy()
     }
 

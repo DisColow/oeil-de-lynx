@@ -1,0 +1,4 @@
+<resources>
+    <string name="shortcut_watch_short">Regarder</string>
+    <string name="shortcut_watch_long">Regarder une caméra en direct</string>
+</resources>

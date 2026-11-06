@@ -17,15 +17,55 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Notification Android lors d’une détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature, début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
-- Service de premier plan pendant la surveillance. Les analyses et captures restent locales ; l’application n’envoie pas de vidéo sur Internet.
+- **Direct vers un second téléphone** : un téléphone spectateur appairé par QR code regarde la caméra en temps réel, sur le même Wi-Fi ou depuis Internet. Le flux va directement du téléphone caméra au spectateur via la box internet de la caméra, sans serveur intermédiaire ; il est chiffré de bout en bout avec la clé échangée lors de l’appairage.
+- Service de premier plan pendant la surveillance. Les analyses et captures restent locales ; l’application n’envoie de vidéo qu’aux téléphones spectateurs appairés, directement.
 
 ## Comportement et limites
 
-Le détecteur vidéo analyse une image réduite de 320 × 240 au plus une fois toutes les 700 ms. Il compare des échantillons de luminance entre deux images. Une détection demande désormais un écart moyen supérieur à 16 niveaux, au moins 18 % d’échantillons modifiés et un écart individuel supérieur à 32. Ces seuils plus stricts réduisent les faux positifs ; ils restent à calibrer selon le cadrage et le capteur du téléphone. L’enregistreur demande une qualité SD pour limiter chauffe et stockage, puis utilise la plus basse qualité proposée par la caméra si SD n’est pas disponible.
+Le détecteur vidéo analyse le flux d’analyse CameraX (640 × 480 visé, pour servir aussi au direct) au plus une fois toutes les 700 ms. Il compare une grille d’environ 40 × 30 échantillons de luminance entre deux images, soit la même densité qu’avec l’ancienne image 320 × 240. Une détection demande désormais un écart moyen supérieur à 16 niveaux, au moins 18 % d’échantillons modifiés et un écart individuel supérieur à 32. Ces seuils plus stricts réduisent les faux positifs ; ils restent à calibrer selon le cadrage et le capteur du téléphone. L’enregistreur demande une qualité SD pour limiter chauffe et stockage, puis utilise la plus basse qualité proposée par la caméra si SD n’est pas disponible.
 
 Le détecteur sonore lit le microphone en mono à 8 kHz et déclenche sur un niveau RMS fixe. Pendant un clip, l’analyse sonore est suspendue ; la piste audio du clip, elle, est enregistrée. Une capture s’arrête après au moins 5 secondes lorsqu’il n’y a plus d’activité pendant 12 secondes, ou lorsqu’elle atteint la durée maximale choisie. Un seul clip est enregistré à la fois.
 
 **Masquer l’aperçu cache l’image dans l’interface, mais ne coupe pas la caméra ni l’analyse.** La caméra reste nécessaire à la détection de mouvement. Le masquage visuel ne garantit donc pas à lui seul une baisse de température. La consommation et la chauffe varient selon le téléphone, la température ambiante, l’alimentation et la scène filmée. Vérifier le comportement sur le T771K lors d’une surveillance prolongée et laisser l’appareil ventilé.
+
+## Direct entre deux téléphones
+
+Le même APK sert aux deux rôles : le **téléphone caméra** (celui qui surveille) et le **téléphone spectateur** (celui qui regarde).
+
+### Appairer
+
+1. Sur le téléphone caméra : ⚙ › **Appairer un téléphone spectateur**. Un QR code s’affiche, avec l’état de la box et les adresses où la caméra sera joignable.
+2. Sur le téléphone spectateur : ⚙ › **Regarder une caméra** (ou appui long sur l’icône › **Regarder**), puis **Scanner le QR code d’une caméra**. À défaut, le code peut être envoyé par message (« Partager le code ») puis collé.
+3. Démarrer la surveillance sur le téléphone caméra. Sur le spectateur, toucher le nom de la caméra : le direct s’affiche (environ 8 images/s en 640 × 480, sans son), avec l’indicateur REC lorsqu’un clip est en cours d’enregistrement.
+
+Le direct n’existe que pendant la surveillance : c’est le service de surveillance qui possède la caméra. Tant qu’aucun appairage n’a été créé, l’application n’ouvre aucun port. La notification de surveillance et la pastille du HUD indiquent le nombre de spectateurs connectés (3 au maximum).
+
+### Chemin réseau, sans serveur
+
+Le téléphone caméra écoute en TCP sur le port **47474**. Le spectateur essaie en parallèle toutes les adresses connues et garde la première qui répond :
+
+| Situation du spectateur | Adresse utilisée | Condition |
+| --- | --- | --- |
+| Même Wi-Fi que la caméra | IPv4 locale (`192.168.x.x`) | Aucune. |
+| En 4G / autre réseau | IPv4 publique de la box | Port 47474 redirigé vers le téléphone caméra. L’application le demande automatiquement à la box en **UPnP** au démarrage de la surveillance et le referme à l’arrêt. Si la box n’a pas l’UPnP (ou s’il est désactivé), créer la redirection TCP 47474 → IP locale du téléphone caméra dans l’interface de la box, idéalement avec un bail DHCP fixe. |
+| En 4G / autre réseau, en IPv6 | IPv6 globale du téléphone caméra | Le pare-feu IPv6 de la box doit autoriser les connexions entrantes (souvent désactivé par défaut). |
+| IP publique changeante | Nom DynDNS saisi dans « Adresse personnalisée » | Ex. nom fourni par la box (`xxx.freeboxos.fr`, DynDNS de la Livebox…). |
+
+Les adresses sont enregistrées dans le QR code puis **mises à jour automatiquement** à chaque connexion réussie (par exemple sur le Wi-Fi de la maison). Si la box est elle-même derrière un autre routeur ou une IP partagée par l’opérateur (CGNAT, adresses `100.64.x.x`), l’accès IPv4 depuis Internet est impossible : l’écran d’appairage le signale ; restent le même Wi-Fi et l’IPv6.
+
+### Sécurité
+
+- Le QR code contient une clé secrète aléatoire de 256 bits propre à la caméra. Ne le montrer qu’à des téléphones de confiance.
+- À chaque connexion, les deux téléphones échangent des nonces aléatoires et dérivent deux clés AES-256-GCM (HMAC-SHA256). L’authentification du spectateur, les images et les états sont chiffrés et authentifiés ; un enregistrement modifié, rejoué ou envoyé avec une autre clé est refusé et la connexion fermée. Rien n’est envoyé en clair avant l’authentification, hormis l’en-tête de protocole et les nonces.
+- **Révoquer tous les spectateurs** (écran d’appairage) génère une nouvelle clé et déconnecte immédiatement les spectateurs : ils doivent scanner le nouveau QR code.
+- Il s’agit d’un protocole spécifique construit sur des primitives standard (pas de TLS) ; il n’a pas fait l’objet d’un audit indépendant.
+
+### Débit, batterie et limites
+
+- Les images JPEG ne sont encodées que lorsqu’au moins un spectateur est connecté. Compter environ 2 à 3 Mbit/s en montant depuis la box : confortable en fibre, juste en ADSL. Sur un lien lent, le serveur saute les images intermédiaires au lieu d’accumuler du retard.
+- Pendant le direct, un verrou Wi-Fi empêche la mise en veille du Wi-Fi écran éteint. Sur certains téléphones, il faut aussi exclure l’application de l’optimisation de batterie.
+- Pas de son dans le direct pour l’instant ; les clips enregistrés gardent leur piste audio.
+- Le spectateur coupe le flux lorsqu’il quitte l’écran du direct ; il se reconnecte automatiquement en cas de coupure.
 
 ## Architecture du projet
 
@@ -37,11 +77,20 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `MonitorService.kt` | Service de premier plan, session CameraX, détections audio/vidéo, enregistrement MediaStore et notifications. |
 | `GalleryActivity.kt` | Liste des vidéos, miniatures, sélection, suppression confirmée et lecteur intégré. |
 | `ImmersiveMode.kt` | Masquage temporaire des barres de navigation et d’état dans les écrans principaux. |
+| `LiveProtocol.kt` | Protocole du direct (échange de nonces, canal AES-GCM, code d’appairage). Pur JVM, testé. |
+| `LiveServer.kt` | Serveur TCP du direct dans le téléphone caméra ; une file « dernière image » par spectateur. |
+| `LiveFrameEncoder.kt` | Conversion des images YUV d’`ImageAnalysis` en JPEG pour le direct. |
+| `LiveCamera.kt` | Identité et clé de la caméra, adresses publiables (IPv4, IPv6, DynDNS), ouverture du port sur la box. |
+| `LiveUpnp.kt` | Client UPnP IGD minimal (SSDP, `AddPortMapping`, IP externe) écrit sur sockets bruts. |
+| `LiveClient.kt` | Connexion du spectateur (course entre adresses, reconnexion) et stockage des caméras appairées. |
+| `PairingActivity.kt` | Écran caméra : QR code, état de la box, adresses, DynDNS, révocation. |
+| `ViewerActivity.kt` / `ScanActivity.kt` / `LiveActivity.kt` | Écrans spectateur : caméras appairées, lecteur de QR code (ZXing), direct plein écran. |
 | `app/src/main/res/drawable/ic_camera*.xml` | Icônes caméra visible et caméra masquée. |
 | `app/src/main/res/drawable/ic_cat_eye_*.xml` | Visuel vectoriel de l’œil pour le splash screen, l’icône et les icônes thématiques Android. |
 | `app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml` | Icônes adaptatives du lanceur Android. |
 | `app/src/main/res/values/styles.xml` | Thème de l’application et thème AndroidX du splash screen. |
-| `app/src/main/AndroidManifest.xml` | Activités, service caméra/micro, permissions et `FileProvider`. |
+| `app/src/main/AndroidManifest.xml` | Activités, service caméra/micro, permissions (dont réseau pour le direct) et `FileProvider`. |
+| `app/src/main/res/xml/shortcuts.xml` | Raccourci « Regarder » sur l’icône du lanceur. |
 | `app/src/main/res/xml/file_paths.xml` | Chemins privés exposés au lecteur Android pour les anciens clips. |
 | `.github/workflows/release.yml` | Compilation et publication de l’APK signé à chaque tag de version. |
 
@@ -77,6 +126,8 @@ Pour exécuter les tests unitaires du détecteur de mouvement et l’analyse And
 ```shell
 gradle testDebugUnitTest lintDebug assembleDebug
 ```
+
+Les tests du direct (`LiveProtocolTest`, `LiveUpnpTest`) vérifient l’échange chiffré sur de vrais sockets locaux, le refus d’une mauvaise clé, d’un enregistrement modifié ou rejoué, le code d’appairage et l’analyse des réponses UPnP. Ils ne remplacent pas un essai réel entre deux téléphones, en Wi-Fi puis en 4G.
 
 Les tests du détecteur couvrent une image stable, une faible variation d’éclairage, une modification sous le ratio requis, un changement net de scène, ainsi que les images vides ou de tailles différentes. Ils valident la logique de seuil ; ils ne remplacent pas un essai caméra et température sur le T771K.
 
@@ -118,7 +169,7 @@ Une fois le tag poussé, suivre l’exécution dans l’onglet **Actions** du d�
 
 ## Permissions et stockage
 
-Le manifeste déclare les permissions caméra, microphone, notifications Android 13+, service de premier plan caméra/micro et verrouillage d’activité. L’utilisateur doit accepter les permissions runtime caméra, microphone et notifications avant de démarrer la surveillance.
+Le manifeste déclare les permissions caméra, microphone, notifications Android 13+, service de premier plan caméra/micro et verrouillage d’activité, ainsi que les permissions réseau du direct (Internet, état du réseau et du Wi-Fi). Le téléphone spectateur n’a besoin que de la caméra, pour scanner le QR code. L’utilisateur doit accepter les permissions runtime caméra, microphone et notifications avant de démarrer la surveillance.
 
 Les nouveaux clips sont publiés via `MediaStore` sous `Movies/Œil de Lynx`. La suppression dans la galerie de l’application supprime le média correspondant. Les clips conservés dans le dossier privé historique ne sont visibles que par l’application.
 
@@ -127,5 +178,6 @@ Les nouveaux clips sont publiés via `MediaStore` sous `Movies/Œil de Lynx`. La
 - Compiler un build debug avec `gradle assembleDebug`.
 - Installer l’APK release de test sur un appareil de test ; vérifier l’installation de mise à jour avec la même clé de signature.
 - Vérifier séparément splash, icône du lanceur, aperçu, masquage, bascule de caméra pendant la surveillance et pendant un clip, détection son/mouvement, notification, durée maximale, lecture et suppression.
+- Direct : appairage par QR code, direct sur le même Wi-Fi, puis en 4G (vérifier l’ouverture UPnP ou la redirection manuelle), REC visible côté spectateur, révocation, reconnexion après coupure Wi-Fi.
 - Faire un essai prolongé sur le téléphone cible : l’émulateur ne reproduit ni les performances de caméra ni la température du T771K.
 - Avant une release, contrôler le tag, le succès du workflow Actions et la présence de l’APK dans la release GitHub.
