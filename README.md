@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.4.3`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.5.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.4.3` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.5.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -152,11 +152,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.4.3
-git push origin v1.4.3
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
-Remplacer `1.4.3` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.5.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
