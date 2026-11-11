@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.6.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.6.2`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.6.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.6.2` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -14,8 +14,8 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Démarrage de la surveillance avec aperçu visible pendant 1 minute, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
 - Détection locale du mouvement, avec trois niveaux de sensibilité (⚙). Le déclenchement par le son est une option, désactivée par défaut.
 - Enregistrement MP4 avec piste audio dès qu’un mouvement est détecté ; le clip s’arrête 10 secondes après la fin du mouvement. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
-- Notification Android lors d’une détection. La toucher ouvre la galerie sur la capture correspondante.
-- Galerie plein écran : miniature, début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
+- Notification Android en priorité haute (bannière et son) sur le téléphone caméra à chaque détection. La toucher ouvre la galerie sur la capture correspondante.
+- Galerie plein écran : miniature (image prise à ~1 s du début, chargée en arrière-plan), début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
 - **Alertes sur le téléphone spectateur** : notification dès que la caméra détecte un mouvement (et si elle reste injoignable plus de 3 minutes), sans serveur de notifications.
 - **Direct vers un second téléphone** : un téléphone spectateur appairé par QR code regarde la caméra en temps réel, sur le même Wi-Fi ou depuis Internet. Le flux va directement du téléphone caméra au spectateur via la box internet de la caméra, sans serveur intermédiaire ; il est chiffré de bout en bout avec la clé échangée lors de l’appairage.
@@ -63,7 +63,7 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 
 ### Alertes de mouvement sur le téléphone spectateur
 
-Sur le téléphone spectateur : appui long sur la caméra › **Activer les alertes de mouvement** (Android demande l’autorisation d’afficher des notifications). Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
+Sur le téléphone spectateur, les notifications sont proposées dès l’appairage ; ensuite, le bouton **🔔 Notifications de mouvement** sous chaque caméra (⚙ › Regarder une caméra) les active ou les coupe. Android demande l’autorisation d’afficher des notifications. Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
 
 - une notification « Mouvement détecté · *caméra* » au début de chaque clip ; la toucher ouvre le direct ;
 - une notification si la caméra reste injoignable plus de 3 minutes (surveillance arrêtée, Wi-Fi ou box coupés…).
@@ -163,11 +163,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.6.1
-git push origin v1.6.1
+git tag v1.6.2
+git push origin v1.6.2
 ```
 
-Remplacer `1.6.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.6.2` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 

@@ -406,7 +406,9 @@ class MonitorService : LifecycleService() {
         if (Build.VERSION.SDK_INT >= 26) {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Surveillance", NotificationManager.IMPORTANCE_LOW))
-            manager.createNotificationChannel(NotificationChannel(DETECTION_CHANNEL_ID, "Détections", NotificationManager.IMPORTANCE_DEFAULT))
+            // Nouveau canal en priorité haute (bannière + son) : un canal existant ne peut pas changer d’importance.
+            manager.deleteNotificationChannel("lynx-detections")
+            manager.createNotificationChannel(NotificationChannel(DETECTION_CHANNEL_ID, "Mouvements détectés", NotificationManager.IMPORTANCE_HIGH))
         }
     }
     private fun notification(message: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -422,6 +424,7 @@ class MonitorService : LifecycleService() {
             this, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, DETECTION_CHANNEL_ID)
+            .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_ALARM)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle("Activité détectée")
             .setContentText(message)
@@ -479,7 +482,7 @@ class MonitorService : LifecycleService() {
             activePreview?.setSurfaceProvider(provider)
         }
         private const val CHANNEL_ID = "lynx-surveillance"
-        private const val DETECTION_CHANNEL_ID = "lynx-detections"
+        private const val DETECTION_CHANNEL_ID = "lynx-motion-alerts"
         private const val NOTIFICATION_ID = 42
         private const val TAG = "LynxMonitor"
         private const val ANALYSIS_INTERVAL_MS = 500L
