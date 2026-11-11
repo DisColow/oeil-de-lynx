@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
@@ -58,6 +59,13 @@ class MonitorService : LifecycleService() {
     private var maxClipMs = 10 * 60_000L
     private var useFrontCamera = false
     private var stopReason: String? = null
+    // Direct vers les téléphones spectateurs appairés (null si aucun appairage).
+    @Volatile private var liveServer: LiveServer? = null
+    private var liveEncoder = LiveFrameEncoder()
+    private var lastLiveFrameAt = 0L
+    private var wifiLock: WifiManager.WifiLock? = null
+    @Volatile private var liveViewers = 0
+    private var statusText = "Initialisation de la caméra"
 
     override fun onCreate() {
         super.onCreate()
@@ -82,9 +90,7 @@ class MonitorService : LifecycleService() {
                         pendingCameraFacing = null
                         rebindCamera(requestedFacing)
                     } else if (bindCamera(cameraProvider!!)) {
-                        getSystemService(NotificationManager::class.java).notify(
-                            NOTIFICATION_ID, notification(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
-                        )
+                        updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
                         publishMonitorState(active = true)
                     } else {
                         Log.e(TAG, "Initial CameraX binding failed for ${if (useFrontCamera) "front" else "back"} camera")
@@ -98,6 +104,7 @@ class MonitorService : LifecycleService() {
         }
         // Le son peut se déclencher avant la fin du lien CameraX ; videoCapture est vérifié au déclenchement.
         startSoundDetection()
+        startLive()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -105,6 +112,11 @@ class MonitorService : LifecycleService() {
         Log.i(TAG, "Service start command: ${intent?.action ?: "START"}")
         if (intent?.action == ACTION_SWITCH_CAMERA) {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
+        } else if (intent?.action == ACTION_LIVE_REFRESH && !shuttingDown) {
+            // Nouvel appairage, nouvelle clé ou nouveau nom : relance le direct avec les réglages actuels.
+            liveServer?.disconnectAll()
+            startLive()
+            publishLiveStatus()
         }
         return result
     }
@@ -118,8 +130,9 @@ class MonitorService : LifecycleService() {
         val preview = Preview.Builder().build()
         activePreview = preview
         preview.setSurfaceProvider(previewSurfaceProvider)
+        // 640 × 480 : assez net pour le direct ; la détection n’échantillonne qu’une grille de 40 × 30 points.
         val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setTargetResolution(android.util.Size(320, 240)).build()
+            .setTargetResolution(android.util.Size(640, 480)).build()
         analysis.setAnalyzer(executor) { image -> analyzeFrame(image) }
         return try {
             provider.unbindAll()
@@ -169,34 +182,42 @@ class MonitorService : LifecycleService() {
                 stopWithFailure("Aucune caméra disponible pour la surveillance. Vérifie les autorisations puis réessaie.")
                 return
             }
-            getSystemService(NotificationManager::class.java).notify(
-                NOTIFICATION_ID, notification("Caméra indisponible · retour à la caméra précédente")
-            )
+            updateStatus("Caméra indisponible · retour à la caméra précédente")
             publishMonitorState(active = true, message = "Caméra indisponible, retour à la caméra précédente.")
         } else {
-            getSystemService(NotificationManager::class.java).notify(
-                NOTIFICATION_ID, notification(if (frontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
-            )
+            updateStatus(if (frontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
             publishMonitorState(active = true)
         }
+        publishLiveStatus()
         startSoundDetection()
     }
 
     private fun analyzeFrame(image: ImageProxy) {
         val now = SystemClock.elapsedRealtime()
         try {
-            // Analyse au plus une image basse résolution toutes les 700 ms pour limiter le processeur.
+            // Le direct n’encode des JPEG que si un spectateur est connecté, à cadence limitée.
+            val server = liveServer
+            if (server != null && server.hasViewers() && now - lastLiveFrameAt >= LIVE_FRAME_INTERVAL_MS) {
+                lastLiveFrameAt = now
+                try {
+                    liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees) }
+                } catch (error: Exception) { Log.w(TAG, "Live frame encoding failed", error) }
+            }
+            // Analyse au plus une image toutes les 700 ms pour limiter le processeur.
             if (now - lastFrameAt < 700) return
             lastFrameAt = now
             // Chaque image CameraX doit être fermée, même en cas de retour anticipé (voir finally).
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate(); val stride = plane.rowStride
             val pixelStride = plane.pixelStride
+            // Grille d’environ 40 × 30 points quelle que soit la résolution : mêmes seuils qu’en 320 × 240.
+            val step = maxOf(8, image.width / 40)
+            val start = step / 2
+            val capacity = ((image.height - start + step - 1) / step) * ((image.width - start + step - 1) / step)
             // Stocke les octets directement : évite le boxing de Byte sur chaque pixel échantillonné.
-            val capacity = ((image.height - 4 + 7) / 8) * ((image.width - 4 + 7) / 8)
-            val samples = ByteArray(capacity)
+            val samples = ByteArray(capacity.coerceAtLeast(0))
             var sampleCount = 0
-            for (y in 4 until image.height step 8) for (x in 4 until image.width step 8) {
+            for (y in start until image.height step step) for (x in start until image.width step step) {
                 val index = y * stride + x * pixelStride
                 if (index < buffer.limit() && sampleCount < samples.size) samples[sampleCount++] = buffer.get(index)
             }
@@ -261,6 +282,7 @@ class MonitorService : LifecycleService() {
                     if (event is VideoRecordEvent.Finalize) {
                         synchronized(this) {
                             recording = null
+                            publishLiveStatus()
                             if (!shuttingDown) {
                                 val nextFacing = pendingCameraFacing
                                 if (nextFacing != null) {
@@ -269,6 +291,7 @@ class MonitorService : LifecycleService() {
                                 } else startSoundDetection()
                             }
                         }
+                        if (!shuttingDown) updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
                         if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
                         else getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
@@ -277,7 +300,8 @@ class MonitorService : LifecycleService() {
                         getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
                         )
-                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Enregistrement · $reason"))
+                        updateStatus("Enregistrement · $reason")
+                        publishLiveStatus()
                     }
                 }
         } catch (_: SecurityException) {
@@ -303,6 +327,68 @@ class MonitorService : LifecycleService() {
         try { old.stop() } catch (_: Exception) { }
         old.release()
         audioThread?.interrupt(); audioThread = null
+    }
+
+    /** Ouvre le direct si un téléphone spectateur a été appairé ; demande à la box d’ouvrir le port. */
+    private fun startLive() {
+        if (!LiveCamera.isPaired(this)) return
+        if (liveServer == null) {
+            val server = LiveServer(
+                LiveProtocol.DEFAULT_PORT,
+                secretProvider = { LiveCamera.secret(this) },
+                helloProvider = { liveHello() },
+                onViewersChanged = { count ->
+                    liveViewers = count
+                    ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) updateStatus(statusText) }
+                    sendBroadcast(Intent(ACTION_LIVE_VIEWERS_CHANGED).setPackage(packageName).putExtra(EXTRA_LIVE_VIEWERS, count))
+                }
+            )
+            if (!server.start()) {
+                updateStatus("Direct indisponible : port ${LiveProtocol.DEFAULT_PORT} occupé")
+                return
+            }
+            liveServer = server
+            // Garde le Wi-Fi actif écran éteint, sinon le direct se fige au bout de quelques minutes.
+            val wifi = applicationContext.getSystemService(WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            wifiLock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "oeildelynx:live")?.apply {
+                setReferenceCounted(false); acquire()
+            }
+        }
+        Thread({ LiveCamera.probeBox(applicationContext, openPort = true) }, "lynx-upnp").start()
+    }
+
+    private fun stopLive() {
+        val server = liveServer ?: return
+        liveServer = null
+        server.stop(sayGoodbye = true)
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
+        // Referme le port sur la box : rien n’écoute plus derrière.
+        val context = applicationContext
+        Thread({ LiveCamera.closeBoxPort(context) }, "lynx-upnp-close").start()
+    }
+
+    private fun liveHello(): Map<String, String> = linkedMapOf(
+        "id" to LiveCamera.id(this),
+        "n" to LiveCamera.name(this),
+        "h" to LiveCamera.candidates(this).joinToString(",")
+    )
+
+    private fun publishLiveStatus() {
+        liveServer?.publishStatus(linkedMapOf(
+            "rec" to if (recording != null) "1" else "0",
+            "cam" to if (useFrontCamera) "front" else "back",
+            "n" to LiveCamera.name(this)
+        ))
+    }
+
+    /** Notification permanente : état de surveillance + nombre de spectateurs en direct, par transparence. */
+    private fun updateStatus(text: String) {
+        statusText = text
+        val viewers = liveViewers
+        val suffix = when (viewers) { 0 -> ""; 1 -> " · 1 spectateur en direct"; else -> " · $viewers spectateurs en direct" }
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text + suffix))
     }
 
     private fun createChannel() {
@@ -336,6 +422,7 @@ class MonitorService : LifecycleService() {
         shuttingDown = true
         pendingCameraFacing = null
         recording?.stop(); stopSoundDetection()
+        stopLive()
         activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
         if (::executor.isInitialized) executor.shutdownNow()
@@ -368,6 +455,9 @@ class MonitorService : LifecycleService() {
         const val EXTRA_FRONT_CAMERA = "front_camera"
         const val ACTION_SWITCH_CAMERA = "fr.oeildelynx.action.SWITCH_CAMERA"
         const val ACTION_MONITOR_STATE_CHANGED = "fr.oeildelynx.action.MONITOR_STATE_CHANGED"
+        const val ACTION_LIVE_REFRESH = "fr.oeildelynx.action.LIVE_REFRESH"
+        const val ACTION_LIVE_VIEWERS_CHANGED = "fr.oeildelynx.action.LIVE_VIEWERS_CHANGED"
+        const val EXTRA_LIVE_VIEWERS = "live_viewers"
         const val EXTRA_MONITORING_ACTIVE = "monitoring_active"
         const val EXTRA_MONITOR_MESSAGE = "monitor_message"
         // L’Activity et le service ont des durées de vie distinctes ; volatile transmet leur surface d’aperçu.
@@ -383,6 +473,9 @@ class MonitorService : LifecycleService() {
         private const val TAG = "LynxMonitor"
         private const val QUIET_PERIOD_MS = 12_000L
         private const val MIN_CLIP_MS = 5_000L
+        // Direct : environ 8 images/s en JPEG qualité 60, soit ~2 à 3 Mbit/s en 640 × 480.
+        private const val LIVE_FRAME_INTERVAL_MS = 120L
+        private const val LIVE_JPEG_QUALITY = 60
         // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.
     }
 }
