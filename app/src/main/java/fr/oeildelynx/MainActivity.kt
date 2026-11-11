@@ -178,7 +178,7 @@ class MainActivity : ComponentActivity() {
         controls.addView(record.third, LinearLayout.LayoutParams(0, dp(76), 1f))
         bottom.addView(controls)
         bottom.addView(TextView(this).apply {
-            text = "Les clips sont enregistrés lorsqu’un son ou un mouvement est détecté."
+            text = "Un clip est enregistré dès qu’un mouvement est détecté, jusqu’à 5 s après la fin du mouvement."
             textSize = 11f; gravity = Gravity.CENTER; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(8), 0, 0)
         })
         root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -354,18 +354,41 @@ class MainActivity : ComponentActivity() {
 
     /** Menu ⚙ : réglages des clips, appairage côté caméra et mode spectateur. */
     private fun showMenu() {
+        val soundOn = prefs.getBoolean(MonitorService.PREF_SOUND_TRIGGER, false)
         val entries = arrayOf(
+            "Sensibilité au mouvement : ${MonitorService.motionSensitivity(this).label}",
+            if (soundOn) "Déclencher aussi sur le son : oui" else "Déclencher aussi sur le son : non",
             "Durée maximale des clips",
             "Appairer un téléphone spectateur (direct)",
             "Regarder une caméra (ce téléphone devient spectateur)"
         )
         AlertDialog.Builder(this).setTitle("Œil de Lynx").setItems(entries) { _, which ->
             when (which) {
-                0 -> showRules()
-                1 -> startActivity(Intent(this, PairingActivity::class.java))
-                2 -> startActivity(Intent(this, ViewerActivity::class.java))
+                0 -> showSensitivity()
+                1 -> {
+                    prefs.edit().putBoolean(MonitorService.PREF_SOUND_TRIGGER, !soundOn).apply()
+                    val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
+                    toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
+                }
+                2 -> showRules()
+                3 -> startActivity(Intent(this, PairingActivity::class.java))
+                4 -> startActivity(Intent(this, ViewerActivity::class.java))
             }
         }.setNegativeButton("Fermer", null).show()
+    }
+
+    /** Part de l’image qui doit bouger : élevée = petit mouvement suffit, faible = moins de fausses alertes. */
+    private fun showSensitivity() {
+        val levels = MotionDetector.Sensitivity.entries
+        val labels = arrayOf(
+            "Faible · grands mouvements seulement",
+            "Normale · une personne dans la pièce",
+            "Élevée · petits mouvements, plus de fausses alertes"
+        )
+        AlertDialog.Builder(this).setTitle("Sensibilité au mouvement")
+            .setSingleChoiceItems(labels, levels.indexOf(MonitorService.motionSensitivity(this))) { dialog, which ->
+                prefs.edit().putString(MonitorService.PREF_SENSITIVITY, levels[which].name).apply(); dialog.dismiss()
+            }.setNegativeButton("Fermer", null).show()
     }
 
     private fun showRules() {
@@ -405,7 +428,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         // Après Démarrer, l’aperçu initial reste visible moins longtemps qu’un aperçu réactivé manuellement.
-        private const val STARTUP_PREVIEW_TIMEOUT_MS = 5_000L
+        private const val STARTUP_PREVIEW_TIMEOUT_MS = 60_000L
         private const val PREVIEW_TIMEOUT_MS = 90_000L
     }
 }
