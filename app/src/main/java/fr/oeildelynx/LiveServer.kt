@@ -32,8 +32,9 @@ internal class LiveServer(
     @Volatile private var running = false
     @Volatile private var lastStatus: Map<String, String> = emptyMap()
 
-    val viewerCount get() = viewers.size
-    fun hasViewers() = viewers.isNotEmpty()
+    /** Spectateurs qui regardent l’image (les abonnés aux seules alertes ne comptent pas). */
+    val viewerCount get() = viewers.count { !it.alertsOnly }
+    fun hasViewers() = viewers.any { !it.alertsOnly }
 
     /** Ouvre le port d’écoute (IPv4 et IPv6). Renvoie faux si le port est déjà pris. */
     fun start(): Boolean {
@@ -67,11 +68,11 @@ internal class LiveServer(
     fun disconnectAll() = viewers.forEach { it.close() }
 
     fun publishFrame(jpeg: ByteArray, rotationDegrees: Int) {
-        if (viewers.isEmpty()) return
+        if (!hasViewers()) return
         val payload = ByteArray(jpeg.size + 2)
         payload[0] = (rotationDegrees shr 8).toByte(); payload[1] = rotationDegrees.toByte()
         System.arraycopy(jpeg, 0, payload, 2, jpeg.size)
-        viewers.forEach { it.offerFrame(payload) }
+        viewers.forEach { if (!it.alertsOnly) it.offerFrame(payload) }
     }
 
     fun publishStatus(status: Map<String, String>) {
@@ -83,7 +84,7 @@ internal class LiveServer(
     private fun acceptLoop(server: ServerSocket) {
         while (running) {
             val socket = try { server.accept() } catch (_: IOException) { break }
-            if (pendingHandshakes.get() >= MAX_PENDING || viewers.size >= MAX_VIEWERS) {
+            if (pendingHandshakes.get() >= MAX_PENDING || viewers.size >= MAX_VIEWERS + MAX_ALERT_LISTENERS) {
                 Log.w(TAG, "Live connection refused: too many viewers")
                 try { socket.close() } catch (_: IOException) { }
                 continue
@@ -104,9 +105,14 @@ internal class LiveServer(
             )
             val auth = channel.receive()
             if (auth.type != LiveProtocol.TYPE_AUTH) throw IOException("Authentification attendue")
-            val viewerName = String(auth.payload, Charsets.UTF_8).take(60)
+            // Depuis 1.5.1 : `name=…&mode=alerts|live` ; avant : le nom seul.
+            val text = String(auth.payload, Charsets.UTF_8)
+            val fields = if (text.contains('=')) LiveProtocol.decodeFields(text) else mapOf("name" to text)
+            val alertsOnly = fields["mode"] == "alerts"
+            val sameKind = viewers.count { it.alertsOnly == alertsOnly }
+            if (sameKind >= if (alertsOnly) MAX_ALERT_LISTENERS else MAX_VIEWERS) throw IOException("Trop de spectateurs")
             channel.send(LiveProtocol.TYPE_HELLO, LiveProtocol.encodeFields(helloProvider()).toByteArray(Charsets.UTF_8))
-            viewer = Viewer(socket, channel, viewerName)
+            viewer = Viewer(socket, channel, fields["name"].orEmpty().take(60), alertsOnly)
         } catch (error: Exception) {
             // Mauvaise clé, scanner de ports ou connexion coupée : rien n’est envoyé en clair.
             Log.w(TAG, "Live handshake rejected from ${socket.inetAddress?.hostAddress}: ${error.message}")
@@ -118,17 +124,19 @@ internal class LiveServer(
         if (!running) { viewer.close(); return }
         viewers += viewer
         Log.i(TAG, "Live viewer connected: ${viewer.name} from ${socket.inetAddress?.hostAddress}")
-        onViewersChanged(viewers.size)
+        onViewersChanged(viewerCount)
         if (lastStatus.isNotEmpty()) viewer.offerStatus(LiveProtocol.encodeFields(lastStatus).toByteArray(Charsets.UTF_8))
         try { viewer.sendLoop() } finally {
             viewer.close()
             viewers -= viewer
             Log.i(TAG, "Live viewer disconnected: ${viewer.name}")
-            onViewersChanged(viewers.size)
+            onViewersChanged(viewerCount)
         }
     }
 
-    private inner class Viewer(private val socket: Socket, private val channel: SecureChannel, val name: String) {
+    private inner class Viewer(private val socket: Socket, private val channel: SecureChannel, val name: String, val alertsOnly: Boolean) {
+        // Abonné aux alertes : connexion longue durée, signe de vie espacé pour ménager batterie et forfait.
+        private val keepaliveMs = if (alertsOnly) ALERT_KEEPALIVE_MS else KEEPALIVE_MS
         private val lock = Object()
         private var frame: ByteArray? = null
         private var status: ByteArray? = null
@@ -144,7 +152,7 @@ internal class LiveServer(
                 while (true) {
                     var nextFrame: ByteArray?; var nextStatus: ByteArray?; var sayBye: Boolean
                     synchronized(lock) {
-                        if (frame == null && status == null && !bye) lock.wait(KEEPALIVE_MS)
+                        if (frame == null && status == null && !bye) lock.wait(keepaliveMs)
                         nextFrame = frame; nextStatus = status; sayBye = bye
                         frame = null; status = null
                     }
@@ -168,6 +176,8 @@ internal class LiveServer(
     companion object {
         private const val TAG = "LynxLive"
         private const val MAX_VIEWERS = 3
+        private const val MAX_ALERT_LISTENERS = 5
+        private const val ALERT_KEEPALIVE_MS = 25_000L
         private const val MAX_PENDING = 4
         private const val HANDSHAKE_TIMEOUT_MS = 6_000
         private const val KEEPALIVE_MS = 2_000L

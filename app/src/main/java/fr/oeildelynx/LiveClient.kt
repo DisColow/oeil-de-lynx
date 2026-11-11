@@ -38,6 +38,17 @@ internal object ViewerStore {
     fun remove(context: Context, id: String) {
         val list = cameras(context).filterNot { it.id == id }
         prefs(context).edit().putString(KEY, list.joinToString("\n") { it.encode() }).apply()
+        setAlerts(context, id, false)
+    }
+
+    private const val KEY_ALERTS = "alert_cameras"
+
+    /** Caméras pour lesquelles ce téléphone reçoit une notification à chaque mouvement. */
+    fun alertCameras(context: Context): Set<String> = prefs(context).getStringSet(KEY_ALERTS, emptySet()).orEmpty()
+
+    fun setAlerts(context: Context, id: String, enabled: Boolean) {
+        val ids = alertCameras(context).toMutableSet().apply { if (enabled) add(id) else remove(id) }
+        prefs(context).edit().putStringSet(KEY_ALERTS, ids).apply()
     }
 
     /** Les adresses annoncées par la caméra passent devant ; les anciennes restent en secours. */
@@ -48,7 +59,13 @@ internal object ViewerStore {
  * Connexion du téléphone spectateur vers la caméra. Essaie en parallèle toutes les adresses connues
  * (Wi-Fi local d’abord, puis Internet) et garde la première qui s’authentifie. Se reconnecte seul.
  */
-internal class LiveClient(private val context: Context, cameraId: String, private val listener: Listener) {
+internal class LiveClient(
+    private val context: Context,
+    cameraId: String,
+    private val listener: Listener,
+    /** Vrai : connexion d’alerte (état seulement, aucune image), utilisée par [AlertService]. */
+    private val alertsOnly: Boolean = false
+) {
     interface Listener {
         fun onState(text: String, connected: Boolean)
         fun onFrame(bitmap: Bitmap)
@@ -208,12 +225,13 @@ internal class LiveClient(private val context: Context, cameraId: String, privat
                 BufferedInputStream(socket.getInputStream(), 64 * 1024), BufferedOutputStream(socket.getOutputStream()), camera.key
             )
             // À partir d’ici, la caméra a répondu : une fermeture immédiate signifie qu’elle refuse notre clé.
-            channel.send(LiveProtocol.TYPE_AUTH, (Build.MODEL ?: "Spectateur").toByteArray(Charsets.UTF_8))
+            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to if (alertsOnly) "alerts" else "live"))
+            channel.send(LiveProtocol.TYPE_AUTH, auth.toByteArray(Charsets.UTF_8))
             val hello = try { channel.receive() } catch (error: EOFException) { throw KeyRejected() } catch (error: java.net.SocketException) { throw KeyRejected() }
             if (hello.type != LiveProtocol.TYPE_HELLO) throw IOException("Réponse inattendue de la caméra")
             val fields = LiveProtocol.decodeFields(String(hello.payload, Charsets.UTF_8))
             if (fields["id"] != null && fields["id"] != camera.id) throw IOException("Une autre caméra répond à cette adresse")
-            socket.soTimeout = READ_TIMEOUT_MS
+            socket.soTimeout = if (alertsOnly) ALERT_READ_TIMEOUT_MS else READ_TIMEOUT_MS
             return Connected(socket, channel, PairingCode.formatHost(host, port), fields)
         } catch (error: Exception) {
             closeQuietly(socket)
@@ -239,5 +257,6 @@ internal class LiveClient(private val context: Context, cameraId: String, privat
         private const val CONNECT_TIMEOUT_MS = 5_000
         private const val HANDSHAKE_TIMEOUT_MS = 6_000
         private const val READ_TIMEOUT_MS = 10_000
+        private const val ALERT_READ_TIMEOUT_MS = 70_000
     }
 }

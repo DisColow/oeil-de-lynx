@@ -1,6 +1,10 @@
 package fr.oeildelynx
 
+import android.Manifest
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -22,6 +26,14 @@ import androidx.appcompat.app.AlertDialog
 class ViewerActivity : ComponentActivity() {
     private lateinit var list: LinearLayout
 
+    private var pendingAlertCamera: String? = null
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val id = pendingAlertCamera ?: return@registerForActivityResult
+        pendingAlertCamera = null
+        if (granted) enableAlerts(id)
+        else Toast.makeText(this, "Autorise les notifications pour recevoir les alertes de mouvement.", Toast.LENGTH_LONG).show()
+    }
+
     private val scan = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringExtra(ScanActivity.EXTRA_CODE)?.let { addCamera(it) }
     }
@@ -41,6 +53,7 @@ class ViewerActivity : ComponentActivity() {
         root.addView(actions)
         setContentView(root)
         intent.getStringExtra(ScanActivity.EXTRA_CODE)?.let { addCamera(it) }
+        AlertService.sync(this)
     }
 
     override fun onResume() {
@@ -76,7 +89,10 @@ class ViewerActivity : ComponentActivity() {
                 setOnLongClickListener { manage(camera); true }
             }
             row.addView(TextView(this).apply { text = "▶  ${camera.name}"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
-            row.addView(LynxUi.body(this, "${camera.hosts.size} adresse(s) connue(s) · appui long pour gérer", 12f).apply { setPadding(0, dp(4), 0, 0) })
+            val alerts = camera.id in ViewerStore.alertCameras(this)
+            row.addView(LynxUi.body(this,
+                (if (alerts) "🔔 Alertes de mouvement activées" else "Alertes de mouvement désactivées") + " · appui long pour gérer", 12f)
+                .apply { setPadding(0, dp(4), 0, 0); if (alerts) setTextColor(LynxUi.ACCENT) })
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(9) })
         }
     }
@@ -102,9 +118,17 @@ class ViewerActivity : ComponentActivity() {
     }
 
     private fun manage(camera: PairingCode) {
-        val options = arrayOf("Renommer", "Ajouter une adresse (DynDNS, IP fixe…)", "Voir les adresses", "Supprimer")
-        AlertDialog.Builder(this).setTitle(camera.name).setItems(options) { _, which ->
-            when (which) {
+        val alerts = camera.id in ViewerStore.alertCameras(this)
+        val options = arrayOf(
+            if (alerts) "Désactiver les alertes de mouvement" else "Activer les alertes de mouvement",
+            "Renommer", "Ajouter une adresse (DynDNS, IP fixe…)", "Voir les adresses", "Supprimer"
+        )
+        AlertDialog.Builder(this).setTitle(camera.name).setItems(options) { _, item ->
+            if (item == 0) {
+                if (alerts) { ViewerStore.setAlerts(this, camera.id, false); AlertService.sync(this); refresh() } else requestAlerts(camera.id)
+                return@setItems
+            }
+            when (item - 1) {
                 0 -> prompt("Nom de la caméra", camera.name) { ViewerStore.save(this, camera.copy(name = it.ifBlank { camera.name })); refresh() }
                 1 -> prompt("Adresse (hôte ou hôte:port)", "") { entry ->
                     val host = if (PairingCode.parseHost(entry.trim()) != null) entry.trim() else PairingCode.formatHost(entry.trim(), LiveProtocol.DEFAULT_PORT)
@@ -118,10 +142,29 @@ class ViewerActivity : ComponentActivity() {
                     .setPositiveButton("OK", null).show()
                 3 -> AlertDialog.Builder(this).setTitle("Supprimer ${camera.name} ?")
                     .setMessage("Ce téléphone ne pourra plus regarder cette caméra sans un nouvel appairage.")
-                    .setPositiveButton("Supprimer") { _, _ -> ViewerStore.remove(this, camera.id); refresh() }
+                    .setPositiveButton("Supprimer") { _, _ -> ViewerStore.remove(this, camera.id); AlertService.sync(this); refresh() }
                     .setNegativeButton("Annuler", null).show()
             }
         }.show()
+    }
+
+    private fun requestAlerts(cameraId: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pendingAlertCamera = cameraId
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else enableAlerts(cameraId)
+    }
+
+    private fun enableAlerts(cameraId: String) {
+        ViewerStore.setAlerts(this, cameraId, true)
+        AlertService.sync(this)
+        refresh()
+        AlertDialog.Builder(this).setTitle("Alertes activées")
+            .setMessage("Ce téléphone reste connecté à la caméra (sans image) et affiche une notification dès qu’elle détecte un mouvement, " +
+                "ou si elle devient injoignable pendant plus de 3 minutes.\n\n" +
+                "Pour ne pas être coupé par Android, exclus Œil de Lynx de l’optimisation de batterie sur ce téléphone.")
+            .setPositiveButton("OK", null).show()
     }
 
     private fun prompt(title: String, initial: String, onDone: (String) -> Unit) {

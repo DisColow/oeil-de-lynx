@@ -52,6 +52,7 @@ class MonitorService : LifecycleService() {
     private var shuttingDown = false
     private var lastMotionAt = 0L
     private var lastSoundAt = 0L
+    @Volatile private var recordingReason = ""
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
     private var lastFrameAt = 0L
@@ -203,27 +204,32 @@ class MonitorService : LifecycleService() {
                     liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees) }
                 } catch (error: Exception) { Log.w(TAG, "Live frame encoding failed", error) }
             }
-            // Analyse au plus une image toutes les 700 ms pour limiter le processeur.
-            if (now - lastFrameAt < 700) return
+            // Analyse au plus une image toutes les 500 ms pour limiter le processeur.
+            if (now - lastFrameAt < ANALYSIS_INTERVAL_MS) return
             lastFrameAt = now
             // Chaque image CameraX doit être fermée, même en cas de retour anticipé (voir finally).
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate(); val stride = plane.rowStride
             val pixelStride = plane.pixelStride
-            // Grille d’environ 40 × 30 points quelle que soit la résolution : mêmes seuils qu’en 320 × 240.
+            // Grille d’environ 40 × 30 points quelle que soit la résolution.
             val step = maxOf(8, image.width / 40)
             val start = step / 2
             val capacity = ((image.height - start + step - 1) / step) * ((image.width - start + step - 1) / step)
             // Stocke les octets directement : évite le boxing de Byte sur chaque pixel échantillonné.
             val samples = ByteArray(capacity.coerceAtLeast(0))
             var sampleCount = 0
-            for (y in start until image.height step step) for (x in start until image.width step step) {
+            for (y in start until image.height - 1 step step) for (x in start until image.width - 1 step step) {
+                // Moyenne d’un carré de 2 × 2 pixels : atténue le grain du capteur, surtout la nuit.
                 val index = y * stride + x * pixelStride
-                if (index < buffer.limit() && sampleCount < samples.size) samples[sampleCount++] = buffer.get(index)
+                val below = index + stride
+                if (below + pixelStride >= buffer.limit() || sampleCount >= samples.size) continue
+                val sum = (buffer.get(index).toInt() and 0xff) + (buffer.get(index + pixelStride).toInt() and 0xff) +
+                    (buffer.get(below).toInt() and 0xff) + (buffer.get(below + pixelStride).toInt() and 0xff)
+                samples[sampleCount++] = (sum / 4).toByte()
             }
             val currentSamples = samples.copyOf(sampleCount)
             val previous = previousLuma
-            if (previous != null && MotionDetector.hasMotion(currentSamples, previous)) {
+            if (previous != null && MotionDetector.hasMotion(currentSamples, previous, motionSensitivity(this))) {
                 lastMotionAt = now
                 triggerRecording("Mouvement")
             }
@@ -234,6 +240,8 @@ class MonitorService : LifecycleService() {
 
     private fun startSoundDetection() {
         if (recording != null || audioRecord != null) return
+        // Par défaut seul le mouvement déclenche un clip ; le son est une option des réglages.
+        if (!getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) return
         // La permission peut être révoquée depuis les réglages pendant la vie du service.
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         val min = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -300,6 +308,7 @@ class MonitorService : LifecycleService() {
                         getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
                         )
+                        recordingReason = reason
                         updateStatus("Enregistrement · $reason")
                         publishLiveStatus()
                     }
@@ -314,9 +323,10 @@ class MonitorService : LifecycleService() {
     private fun maybeStopRecording(now: Long) {
         if (recording == null || now - recordingSince < MIN_CLIP_MS) return
         maxClipMs = getSharedPreferences("lynx", Context.MODE_PRIVATE).getInt("max_clip_ms", 600_000).toLong()
-        // Arrête après une période calme, tout en appliquant la durée maximale choisie pour limiter le stockage.
+        // Le clip s’arrête quelques secondes après le dernier mouvement (le micro est occupé par le clip,
+        // un clip déclenché par le son s’arrête donc aussi faute de mouvement).
         val lastActivity = maxOf(lastMotionAt, lastSoundAt)
-        if (now - lastActivity > QUIET_PERIOD_MS) recording?.stop()
+        if (now - lastActivity > STOP_AFTER_STILL_MS) recording?.stop()
         // Limite chaque clip afin qu’un déclencheur permanent ne remplisse pas le stockage sans fin.
         if (now - recordingSince > maxClipMs) recording?.stop()
     }
@@ -378,6 +388,7 @@ class MonitorService : LifecycleService() {
     private fun publishLiveStatus() {
         liveServer?.publishStatus(linkedMapOf(
             "rec" to if (recording != null) "1" else "0",
+            "why" to if (recording != null) recordingReason else "",
             "cam" to if (useFrontCamera) "front" else "back",
             "n" to LiveCamera.name(this)
         ))
@@ -471,8 +482,17 @@ class MonitorService : LifecycleService() {
         private const val DETECTION_CHANNEL_ID = "lynx-detections"
         private const val NOTIFICATION_ID = 42
         private const val TAG = "LynxMonitor"
-        private const val QUIET_PERIOD_MS = 12_000L
-        private const val MIN_CLIP_MS = 5_000L
+        private const val ANALYSIS_INTERVAL_MS = 500L
+        // Durée sans mouvement avant de terminer le clip, et durée minimale d’un clip.
+        private const val STOP_AFTER_STILL_MS = 5_000L
+        private const val MIN_CLIP_MS = 3_000L
+        const val PREF_SOUND_TRIGGER = "sound_trigger"
+        const val PREF_SENSITIVITY = "motion_sensitivity"
+
+        internal fun motionSensitivity(context: Context): MotionDetector.Sensitivity {
+            val name = context.getSharedPreferences("lynx", Context.MODE_PRIVATE).getString(PREF_SENSITIVITY, null)
+            return MotionDetector.Sensitivity.entries.firstOrNull { it.name == name } ?: MotionDetector.Sensitivity.NORMAL
+        }
         // Direct : environ 8 images/s en JPEG qualité 60, soit ~2 à 3 Mbit/s en 640 × 480.
         private const val LIVE_FRAME_INTERVAL_MS = 120L
         private const val LIVE_JPEG_QUALITY = 60

@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.5.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.6.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.5.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.6.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -12,19 +12,20 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Les barres de navigation et d’état Android sont masquées dans l’écran caméra comme dans la galerie. Un balayage depuis le bord les affiche temporairement ; Android les masque ensuite automatiquement.
 - Splash screen de lancement et icône adaptative Android assortis : œil de chat vert sur fond vert forêt, avec pupille verticale.
 - Démarrage de la surveillance avec aperçu visible pendant 1 minute, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
-- Détection locale du mouvement et du son, activées ensemble.
-- Enregistrement MP4 avec piste audio lors d’une détection. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
+- Détection locale du mouvement, avec trois niveaux de sensibilité (⚙). Le déclenchement par le son est une option, désactivée par défaut.
+- Enregistrement MP4 avec piste audio dès qu’un mouvement est détecté ; le clip s’arrête 5 secondes après la fin du mouvement. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
 - Notification Android lors d’une détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature, début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
+- **Alertes sur le téléphone spectateur** : notification dès que la caméra détecte un mouvement (et si elle reste injoignable plus de 3 minutes), sans serveur de notifications.
 - **Direct vers un second téléphone** : un téléphone spectateur appairé par QR code regarde la caméra en temps réel, sur le même Wi-Fi ou depuis Internet. Le flux va directement du téléphone caméra au spectateur via la box internet de la caméra, sans serveur intermédiaire ; il est chiffré de bout en bout avec la clé échangée lors de l’appairage.
 - Service de premier plan pendant la surveillance. Les analyses et captures restent locales ; l’application n’envoie de vidéo qu’aux téléphones spectateurs appairés, directement.
 
 ## Comportement et limites
 
-Le détecteur vidéo analyse le flux d’analyse CameraX (640 × 480 visé, pour servir aussi au direct) au plus une fois toutes les 700 ms. Il compare une grille d’environ 40 × 30 échantillons de luminance entre deux images, soit la même densité qu’avec l’ancienne image 320 × 240. Une détection demande désormais un écart moyen supérieur à 16 niveaux, au moins 18 % d’échantillons modifiés et un écart individuel supérieur à 32. Ces seuils plus stricts réduisent les faux positifs ; ils restent à calibrer selon le cadrage et le capteur du téléphone. L’enregistreur demande une qualité SD pour limiter chauffe et stockage, puis utilise la plus basse qualité proposée par la caméra si SD n’est pas disponible.
+Le détecteur vidéo analyse le flux d’analyse CameraX (640 × 480 visé, pour servir aussi au direct) toutes les 500 ms. Il compare une grille d’environ 40 × 30 points, chacun moyenné sur 2 × 2 pixels pour atténuer le grain. L’écart médian entre deux images est d’abord retiré, ce qui neutralise les variations globales de luminosité (exposition automatique, nuage) ; un point est « modifié » s’il change ensuite de plus de 25 niveaux. Il y a mouvement si au moins 5 % (faible), 2 % (normale, par défaut) ou 0,8 % (élevée) des points changent : une personne qui n’occupe qu’une petite partie du cadre suffit. Un saut de luminosité très fort (lumière allumée ou éteinte) compte aussi comme une activité.
 
-Le détecteur sonore lit le microphone en mono à 8 kHz et déclenche sur un niveau RMS fixe. Pendant un clip, l’analyse sonore est suspendue ; la piste audio du clip, elle, est enregistrée. Une capture s’arrête après au moins 5 secondes lorsqu’il n’y a plus d’activité pendant 12 secondes, ou lorsqu’elle atteint la durée maximale choisie. Un seul clip est enregistré à la fois.
+Un clip démarre au premier mouvement détecté. Chaque nouveau mouvement repousse sa fin ; il s’arrête 5 secondes après le dernier mouvement (3 secondes minimum), ou à la durée maximale choisie — si le mouvement continue, un nouveau clip démarre aussitôt. Un seul clip est enregistré à la fois. Le clip commence au moment de la détection : les instants qui la précèdent ne sont pas enregistrés. Option « Déclencher aussi sur le son » : le détecteur sonore lit le microphone en mono à 8 kHz et déclenche sur un niveau RMS fixe ; pendant un clip le micro sert à la piste audio, c’est donc l’absence de mouvement qui termine le clip.
 
 **Masquer l’aperçu cache l’image dans l’interface, mais ne coupe pas la caméra ni l’analyse.** La caméra reste nécessaire à la détection de mouvement. Le masquage visuel ne garantit donc pas à lui seul une baisse de température. La consommation et la chauffe varient selon le téléphone, la température ambiante, l’alimentation et la scène filmée. Vérifier le comportement sur le T771K lors d’une surveillance prolongée et laisser l’appareil ventilé.
 
@@ -60,6 +61,15 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 - **Révoquer tous les spectateurs** (écran d’appairage) génère une nouvelle clé et déconnecte immédiatement les spectateurs : ils doivent scanner le nouveau QR code.
 - Il s’agit d’un protocole spécifique construit sur des primitives standard (pas de TLS) ; il n’a pas fait l’objet d’un audit indépendant.
 
+### Alertes de mouvement sur le téléphone spectateur
+
+Sur le téléphone spectateur : appui long sur la caméra › **Activer les alertes de mouvement** (Android demande l’autorisation d’afficher des notifications). Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
+
+- une notification « Mouvement détecté · *caméra* » au début de chaque clip ; la toucher ouvre le direct ;
+- une notification si la caméra reste injoignable plus de 3 minutes (surveillance arrêtée, Wi-Fi ou box coupés…).
+
+Comme il n’y a pas de serveur de notifications (type Firebase), c’est un service de premier plan du téléphone spectateur qui maintient la connexion ; une notification discrète indique l’état de chaque caméra. Il redémarre avec le téléphone. Les mêmes conditions réseau que le direct s’appliquent ; exclure l’application de l’optimisation de batterie sur le téléphone spectateur pour éviter qu’Android ne coupe la connexion. Jusqu’à 5 téléphones peuvent recevoir les alertes d’une caméra, en plus des 3 spectateurs du direct.
+
 ### Débit, batterie et limites
 
 - Les images JPEG ne sont encodées que lorsqu’au moins un spectateur est connecté. Compter environ 2 à 3 Mbit/s en montant depuis la box : confortable en fibre, juste en ADSL. Sur un lien lent, le serveur saute les images intermédiaires au lieu d’accumuler du retard.
@@ -84,6 +94,7 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `LiveUpnp.kt` | Client UPnP IGD minimal (SSDP, `AddPortMapping`, IP externe) écrit sur sockets bruts. |
 | `LiveClient.kt` | Connexion du spectateur (course entre adresses, reconnexion) et stockage des caméras appairées. |
 | `PairingActivity.kt` | Écran caméra : QR code, état de la box, adresses, DynDNS, révocation. |
+| `AlertService.kt` | Téléphone spectateur : connexion d’alerte permanente et notifications de mouvement, relance au démarrage. |
 | `ViewerActivity.kt` / `ScanActivity.kt` / `LiveActivity.kt` | Écrans spectateur : caméras appairées, lecteur de QR code (ZXing), direct plein écran. |
 | `app/src/main/res/drawable/ic_camera*.xml` | Icônes caméra visible et caméra masquée. |
 | `app/src/main/res/drawable/ic_cat_eye_*.xml` | Visuel vectoriel de l’œil pour le splash screen, l’icône et les icônes thématiques Android. |
@@ -152,11 +163,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.5.0
-git push origin v1.5.0
+git tag v1.6.0
+git push origin v1.6.0
 ```
 
-Remplacer `1.5.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.6.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
