@@ -44,6 +44,13 @@ internal object LiveProtocol {
     const val TYPE_STATUS = 0x11    // caméra → spectateur : état (enregistrement, caméra)
     const val TYPE_KEEPALIVE = 0x12 // caméra → spectateur : rien à envoyer, connexion vivante
     const val TYPE_BYE = 0x13       // caméra → spectateur : surveillance arrêtée
+    // Depuis 1.7.0 : requêtes du spectateur (exposition, galerie distante).
+    const val TYPE_REQUEST = 0x20   // spectateur → caméra : `op=…` + paramètres
+    const val TYPE_LIST = 0x21      // caméra → spectateur : un clip par ligne (champs encodés)
+    const val TYPE_THUMB = 0x22     // caméra → spectateur : miniature JPEG (vide si indisponible)
+    const val TYPE_CHUNK = 0x23     // caméra → spectateur : morceau de fichier vidéo
+    const val TYPE_END = 0x24       // caméra → spectateur : fin du fichier
+    const val TYPE_ERROR = 0x25     // caméra → spectateur : message d’erreur
 
     private val random = SecureRandom()
 
