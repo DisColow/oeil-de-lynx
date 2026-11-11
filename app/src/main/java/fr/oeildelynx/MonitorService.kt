@@ -321,7 +321,7 @@ class MonitorService : LifecycleService() {
     }
 
     private fun maybeStopRecording(now: Long) {
-        if (recording == null || now - recordingSince < MIN_CLIP_MS) return
+        if (recording == null) return
         maxClipMs = getSharedPreferences("lynx", Context.MODE_PRIVATE).getInt("max_clip_ms", 600_000).toLong()
         // Le clip s’arrête quelques secondes après le dernier mouvement (le micro est occupé par le clip,
         // un clip déclenché par le son s’arrête donc aussi faute de mouvement).
@@ -483,9 +483,8 @@ class MonitorService : LifecycleService() {
         private const val NOTIFICATION_ID = 42
         private const val TAG = "LynxMonitor"
         private const val ANALYSIS_INTERVAL_MS = 500L
-        // Durée sans mouvement avant de terminer le clip, et durée minimale d’un clip.
-        private const val STOP_AFTER_STILL_MS = 5_000L
-        private const val MIN_CLIP_MS = 3_000L
+        // Durée sans mouvement avant de terminer le clip.
+        private const val STOP_AFTER_STILL_MS = 10_000L
         const val PREF_SOUND_TRIGGER = "sound_trigger"
         const val PREF_SENSITIVITY = "motion_sensitivity"
 
