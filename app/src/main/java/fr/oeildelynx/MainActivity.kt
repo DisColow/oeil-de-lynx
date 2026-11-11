@@ -178,7 +178,7 @@ class MainActivity : ComponentActivity() {
         controls.addView(record.third, LinearLayout.LayoutParams(0, dp(76), 1f))
         bottom.addView(controls)
         bottom.addView(TextView(this).apply {
-            text = "Un clip est enregistré dès qu’un mouvement est détecté, jusqu’à 5 s après la fin du mouvement."
+            text = "Un clip est enregistré dès qu’un mouvement est détecté, jusqu’à 10 s après la fin du mouvement."
             textSize = 11f; gravity = Gravity.CENTER; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(8), 0, 0)
         })
         root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
