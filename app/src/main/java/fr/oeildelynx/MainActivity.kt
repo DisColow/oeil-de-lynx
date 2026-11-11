@@ -405,7 +405,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         // Après Démarrer, l’aperçu initial reste visible moins longtemps qu’un aperçu réactivé manuellement.
-        private const val STARTUP_PREVIEW_TIMEOUT_MS = 5_000L
+        private const val STARTUP_PREVIEW_TIMEOUT_MS = 60_000L
         private const val PREVIEW_TIMEOUT_MS = 90_000L
     }
 }

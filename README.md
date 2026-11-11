@@ -11,7 +11,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Aperçu caméra plein écran au lancement. La caméra arrière est sélectionnée par défaut ; le bouton permet de basculer entre caméra avant et arrière.
 - Les barres de navigation et d’état Android sont masquées dans l’écran caméra comme dans la galerie. Un balayage depuis le bord les affiche temporairement ; Android les masque ensuite automatiquement.
 - Splash screen de lancement et icône adaptative Android assortis : œil de chat vert sur fond vert forêt, avec pupille verticale.
-- Démarrage de la surveillance avec aperçu visible pendant 5 secondes, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
+- Démarrage de la surveillance avec aperçu visible pendant 1 minute, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
 - Détection locale du mouvement et du son, activées ensemble.
 - Enregistrement MP4 avec piste audio lors d’une détection. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
 - Notification Android lors d’une détection. La toucher ouvre la galerie sur la capture correspondante.
