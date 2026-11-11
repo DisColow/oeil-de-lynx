@@ -306,6 +306,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startMonitoring() {
+        if (!androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            toast("Les notifications d’Œil de Lynx sont désactivées : active-les dans les réglages Android pour être prévenu des mouvements.")
+        }
         prefs.edit().putBoolean("monitoring_active", true).putBoolean("preview_shown", true).apply()
         provider?.unbindAll()
         // Transmet la surface PreviewView au service avant qu’il lie les cas d’usage CameraX.

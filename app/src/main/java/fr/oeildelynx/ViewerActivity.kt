@@ -90,9 +90,20 @@ class ViewerActivity : ComponentActivity() {
             }
             row.addView(TextView(this).apply { text = "▶  ${camera.name}"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
             val alerts = camera.id in ViewerStore.alertCameras(this)
-            row.addView(LynxUi.body(this,
-                (if (alerts) "🔔 Alertes de mouvement activées" else "Alertes de mouvement désactivées") + " · appui long pour gérer", 12f)
-                .apply { setPadding(0, dp(4), 0, 0); if (alerts) setTextColor(LynxUi.ACCENT) })
+            row.addView(LynxUi.body(this, "Toucher : voir le direct · appui long : renommer, adresses, supprimer", 12f)
+                .apply { setPadding(0, dp(4), 0, dp(10)) })
+            // Interrupteur visible des notifications de mouvement pour cette caméra.
+            row.addView(TextView(this).apply {
+                text = if (alerts) "🔔  Notifications de mouvement : activées" else "🔕  Notifications de mouvement : désactivées · toucher pour activer"
+                textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (alerts) LynxUi.ACCENT else Color.WHITE)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = LynxUi.rounded(this@ViewerActivity, if (alerts) 0xff23402f.toInt() else 0xff2a332d.toInt(), 10)
+                setOnClickListener {
+                    if (alerts) { ViewerStore.setAlerts(this@ViewerActivity, camera.id, false); AlertService.sync(this@ViewerActivity); refresh() }
+                    else requestAlerts(camera.id)
+                }
+            })
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(9) })
         }
     }
@@ -100,9 +111,12 @@ class ViewerActivity : ComponentActivity() {
     private fun addCamera(text: String) {
         val code = PairingCode.parse(text)
         if (code == null) { Toast.makeText(this, "Code d’appairage invalide.", Toast.LENGTH_LONG).show(); return }
+        val isNew = ViewerStore.find(this, code.id) == null
         ViewerStore.save(this, code)
         Toast.makeText(this, "« ${code.name} » appairée.", Toast.LENGTH_LONG).show()
         refresh()
+        // Les alertes de mouvement sont le cas d’usage principal : on les propose dès l’appairage.
+        if (isNew) requestAlerts(code.id)
     }
 
     private fun pasteCode() {

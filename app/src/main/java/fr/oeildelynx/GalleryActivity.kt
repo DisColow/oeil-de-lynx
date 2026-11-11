@@ -16,7 +16,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
+import android.graphics.Bitmap
+import android.util.LruCache
 import java.io.File
+import java.util.concurrent.Executors
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,6 +50,10 @@ class GalleryActivity : Activity() {
     private val background = Color.rgb(15, 20, 17)
     private val card = Color.rgb(27, 35, 30)
     private val accent = Color.rgb(140, 210, 162)
+    private val thumbnailLoader = Executors.newSingleThreadExecutor()
+    private val thumbnails = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -136,7 +143,10 @@ class GalleryActivity : Activity() {
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
                     val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                    captures.add(Capture(uri, cursor.getString(nameColumn) ?: "Vidéo", cursor.getLong(dateColumn) * 1000L, cursor.getLong(durationColumn)))
+                    // Durée parfois encore inconnue (0) juste après l’enregistrement : la lire dans le fichier.
+                    val stored = cursor.getLong(durationColumn)
+                    val duration = if (stored > 0) stored else duration(uri)
+                    captures.add(Capture(uri, cursor.getString(nameColumn) ?: "Vidéo", cursor.getLong(dateColumn) * 1000L, duration))
                 }
             }
         } catch (_: Exception) { }
@@ -168,12 +178,9 @@ class GalleryActivity : Activity() {
                 background = rounded(if (selected.contains(key)) 0xff304b39.toInt() else card, dp(16))
             }
             val thumb = ImageView(this@GalleryActivity).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff222a25.toInt())
+                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff222a25.toInt()); tag = key
             }
-            try {
-                if (capture.legacyFile == null) thumb.setImageBitmap(contentResolver.loadThumbnail(capture.uri, Size(dp(144), dp(104)), null))
-                else MediaMetadataRetriever().use { it.setDataSource(capture.legacyFile.absolutePath); thumb.setImageBitmap(it.getFrameAtTime(0)) }
-            } catch (_: Exception) { }
+            bindThumbnail(thumb, capture)
             row.addView(thumb, LinearLayout.LayoutParams(dp(102), dp(76)))
 
             val details = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0) }
@@ -195,6 +202,36 @@ class GalleryActivity : Activity() {
             row.setOnLongClickListener { toggleSelection(capture); true }
             return row
         }
+    }
+
+    /**
+     * Miniatures chargées hors du thread principal et gardées en cache : la liste reste fluide.
+     * On prend une image à ~1 s du début, la toute première étant souvent noire (capteur qui démarre).
+     */
+    private fun bindThumbnail(view: ImageView, capture: Capture) {
+        thumbnails.get(capture.name)?.let { view.setImageBitmap(it); return }
+        view.setImageDrawable(null)
+        thumbnailLoader.execute {
+            val bitmap = loadThumbnail(capture) ?: return@execute
+            thumbnails.put(capture.name, bitmap)
+            runOnUiThread { if (view.tag == capture.name) view.setImageBitmap(bitmap) }
+        }
+    }
+
+    private fun loadThumbnail(capture: Capture): Bitmap? {
+        val frame = try {
+            MediaMetadataRetriever().use { retriever ->
+                if (capture.legacyFile != null) retriever.setDataSource(capture.legacyFile.absolutePath)
+                else retriever.setDataSource(this, capture.uri)
+                val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                val atUs = minOf(1_000L, duration / 2).coerceAtLeast(0L) * 1000L
+                retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, dp(204), dp(152))
+                    ?: retriever.getFrameAtTime(0)
+            }
+        } catch (_: Exception) { null }
+        if (frame != null || capture.legacyFile != null) return frame
+        // Dernier recours : miniature calculée par la médiathèque Android.
+        return try { contentResolver.loadThumbnail(capture.uri, Size(dp(204), dp(152)), null) } catch (_: Exception) { null }
     }
 
     private fun toggleSelection(capture: Capture) {
@@ -234,9 +271,12 @@ class GalleryActivity : Activity() {
         })
         root.addView(header)
 
-        val video = VideoView(this).apply { setBackgroundColor(Color.BLACK) }
+        // Pas de fond sur la VideoView elle-même : il serait dessiné par-dessus l’image de la vidéo.
+        val video = VideoView(this)
         player = video
-        root.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
+        val stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        stage.addView(video, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        root.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
         val info = TextView(this).apply {
             val formatter = SimpleDateFormat("EEEE d MMMM yyyy · HH:mm:ss", Locale.getDefault())
             text = "Début de la capture\n${formatter.format(Date(capture.startMs))}"
@@ -257,6 +297,10 @@ class GalleryActivity : Activity() {
         reloadCaptures()
     }
 
+    private fun duration(uri: Uri): Long = try {
+        MediaMetadataRetriever().use { it.setDataSource(this, uri); it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L }
+    } catch (_: Exception) { 0L }
+
     private fun duration(file: File): Long = try {
         MediaMetadataRetriever().use { it.setDataSource(file.absolutePath); it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L }
     } catch (_: Exception) { 0L }
@@ -273,7 +317,7 @@ class GalleryActivity : Activity() {
         if (player != null) showList() else super.onBackPressed()
     }
 
-    override fun onDestroy() { player?.stopPlayback(); super.onDestroy() }
+    override fun onDestroy() { player?.stopPlayback(); thumbnailLoader.shutdownNow(); super.onDestroy() }
 
     companion object { const val EXTRA_FOCUS_NAME = "focus_capture_name" }
 }
