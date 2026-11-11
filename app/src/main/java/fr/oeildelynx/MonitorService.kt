@@ -52,6 +52,7 @@ class MonitorService : LifecycleService() {
     private var shuttingDown = false
     private var lastMotionAt = 0L
     private var lastSoundAt = 0L
+    private var boundCamera: androidx.camera.core.Camera? = null
     @Volatile private var recordingReason = ""
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
@@ -93,6 +94,7 @@ class MonitorService : LifecycleService() {
                     } else if (bindCamera(cameraProvider!!)) {
                         updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
                         publishMonitorState(active = true)
+                        publishLiveStatus()
                     } else {
                         Log.e(TAG, "Initial CameraX binding failed for ${if (useFrontCamera) "front" else "back"} camera")
                         stopWithFailure("Impossible d’ouvrir la caméra. Vérifie ses autorisations et réessaie.")
@@ -113,6 +115,8 @@ class MonitorService : LifecycleService() {
         Log.i(TAG, "Service start command: ${intent?.action ?: "START"}")
         if (intent?.action == ACTION_SWITCH_CAMERA) {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
+        } else if (intent?.action == ACTION_SET_EXPOSURE && !shuttingDown) {
+            setExposure(intent.getIntExtra(EXTRA_EXPOSURE, 0))
         } else if (intent?.action == ACTION_LIVE_REFRESH && !shuttingDown) {
             // Nouvel appairage, nouvelle clé ou nouveau nom : relance le direct avec les réglages actuels.
             liveServer?.disconnectAll()
@@ -138,7 +142,8 @@ class MonitorService : LifecycleService() {
         return try {
             provider.unbindAll()
             val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-            provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
+            boundCamera = provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
+                .also { Exposure.apply(this, it) }
             Log.i(TAG, "CameraX bound to ${if (useFrontCamera) "front" else "back"} camera")
             true
         } catch (error: Exception) {
@@ -347,6 +352,14 @@ class MonitorService : LifecycleService() {
                 LiveProtocol.DEFAULT_PORT,
                 secretProvider = { LiveCamera.secret(this) },
                 helloProvider = { liveHello() },
+                // Commandes d’un spectateur : seule l’exposition est modifiable à distance.
+                onRequest = { request ->
+                    val value = request["value"]?.toIntOrNull()
+                    if (request["op"] == "exposure" && value != null) {
+                        ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setExposure(value) }
+                    }
+                },
+                gallery = CaptureLibrary(applicationContext),
                 onViewersChanged = { count ->
                     liveViewers = count
                     ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) updateStatus(statusText) }
@@ -385,13 +398,20 @@ class MonitorService : LifecycleService() {
         "h" to LiveCamera.candidates(this).joinToString(",")
     )
 
+    /** Correction d’exposition demandée par le HUD ou par un spectateur (thread principal). */
+    private fun setExposure(index: Int) {
+        Exposure.setIndex(this, index)
+        boundCamera?.let { Exposure.apply(this, it) }
+        publishLiveStatus()
+    }
+
     private fun publishLiveStatus() {
         liveServer?.publishStatus(linkedMapOf(
             "rec" to if (recording != null) "1" else "0",
             "why" to if (recording != null) recordingReason else "",
             "cam" to if (useFrontCamera) "front" else "back",
             "n" to LiveCamera.name(this)
-        ))
+        ) + Exposure.fields(this))
     }
 
     /** Notification permanente : état de surveillance + nombre de spectateurs en direct, par transparence. */
@@ -470,6 +490,8 @@ class MonitorService : LifecycleService() {
         const val ACTION_SWITCH_CAMERA = "fr.oeildelynx.action.SWITCH_CAMERA"
         const val ACTION_MONITOR_STATE_CHANGED = "fr.oeildelynx.action.MONITOR_STATE_CHANGED"
         const val ACTION_LIVE_REFRESH = "fr.oeildelynx.action.LIVE_REFRESH"
+        const val ACTION_SET_EXPOSURE = "fr.oeildelynx.action.SET_EXPOSURE"
+        const val EXTRA_EXPOSURE = "exposure_index"
         const val ACTION_LIVE_VIEWERS_CHANGED = "fr.oeildelynx.action.LIVE_VIEWERS_CHANGED"
         const val EXTRA_LIVE_VIEWERS = "live_viewers"
         const val EXTRA_MONITORING_ACTIVE = "monitoring_active"

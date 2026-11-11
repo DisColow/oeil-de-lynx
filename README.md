@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.6.2`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.7.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.6.2` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.7.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -17,6 +17,8 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Notification Android en priorité haute (bannière et son) sur le téléphone caméra à chaque détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature (image prise à ~1 s du début, chargée en arrière-plan), début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
+- **Exposition réglable** (⚙ › Exposition, ou ☀ dans le direct depuis le téléphone spectateur) : image plus claire la nuit, plus sombre face à une fenêtre.
+- **Galerie à distance** : depuis le direct, le bouton ▧ liste les clips du téléphone caméra et les télécharge directement pour les lire sur le téléphone spectateur.
 - **Alertes sur le téléphone spectateur** : notification dès que la caméra détecte un mouvement (et si elle reste injoignable plus de 3 minutes), sans serveur de notifications.
 - **Direct vers un second téléphone** : un téléphone spectateur appairé par QR code regarde la caméra en temps réel, sur le même Wi-Fi ou depuis Internet. Le flux va directement du téléphone caméra au spectateur via la box internet de la caméra, sans serveur intermédiaire ; il est chiffré de bout en bout avec la clé échangée lors de l’appairage.
 - Service de premier plan pendant la surveillance. Les analyses et captures restent locales ; l’application n’envoie de vidéo qu’aux téléphones spectateurs appairés, directement.
@@ -61,6 +63,15 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 - **Révoquer tous les spectateurs** (écran d’appairage) génère une nouvelle clé et déconnecte immédiatement les spectateurs : ils doivent scanner le nouveau QR code.
 - Il s’agit d’un protocole spécifique construit sur des primitives standard (pas de TLS) ; il n’a pas fait l’objet d’un audit indépendant.
 
+### Exposition et galerie depuis le téléphone spectateur
+
+Dans l’écran du direct :
+
+- **☀** règle la correction d’exposition de la caméra (curseur en EV, bouton « Auto » pour revenir à 0). Le réglage est enregistré sur le téléphone caméra et réappliqué à chaque démarrage ; il se règle aussi sur place par ⚙ › Exposition.
+- **▧** ouvre la galerie de la caméra : liste des 200 derniers clips avec miniatures, puis téléchargement du clip touché par la même connexion directe et chiffrée, et lecture sur le téléphone spectateur. Les clips téléchargés sont gardés en cache (300 Mo au plus) et ne sont pas retéléchargés. Un clip SD pèse environ 10 à 20 Mo par minute : en 4G, le téléchargement consomme le forfait du spectateur et l’envoi montant de la box.
+
+Comme le direct, la galerie à distance n’est accessible que pendant la surveillance (c’est le service de surveillance qui répond), et la caméra doit être en version 1.7.0 ou plus.
+
 ### Alertes de mouvement sur le téléphone spectateur
 
 Sur le téléphone spectateur, les notifications sont proposées dès l’appairage ; ensuite, le bouton **🔔 Notifications de mouvement** sous chaque caméra (⚙ › Regarder une caméra) les active ou les coupe. Android demande l’autorisation d’afficher des notifications. Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
@@ -94,6 +105,9 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `LiveUpnp.kt` | Client UPnP IGD minimal (SSDP, `AddPortMapping`, IP externe) écrit sur sockets bruts. |
 | `LiveClient.kt` | Connexion du spectateur (course entre adresses, reconnexion) et stockage des caméras appairées. |
 | `PairingActivity.kt` | Écran caméra : QR code, état de la box, adresses, DynDNS, révocation. |
+| `Exposure.kt` | Correction d’exposition mémorisée et appliquée à CameraX (aperçu, surveillance, commande distante). |
+| `CaptureLibrary.kt` | Liste, miniatures et lecture des clips pour la galerie distante (dossier de l’application seulement). |
+| `RemoteGalleryActivity.kt` | Galerie de la caméra consultée et téléchargée depuis le téléphone spectateur. |
 | `AlertService.kt` | Téléphone spectateur : connexion d’alerte permanente et notifications de mouvement, relance au démarrage. |
 | `ViewerActivity.kt` / `ScanActivity.kt` / `LiveActivity.kt` | Écrans spectateur : caméras appairées, lecteur de QR code (ZXing), direct plein écran. |
 | `app/src/main/res/drawable/ic_camera*.xml` | Icônes caméra visible et caméra masquée. |
@@ -163,11 +177,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.6.2
-git push origin v1.6.2
+git tag v1.7.0
+git push origin v1.7.0
 ```
 
-Remplacer `1.6.2` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.7.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 

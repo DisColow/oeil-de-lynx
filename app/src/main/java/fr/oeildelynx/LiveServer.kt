@@ -5,6 +5,7 @@ import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
@@ -19,12 +20,24 @@ import java.util.concurrent.atomic.AtomicInteger
  * Chaque spectateur a son propre thread d’envoi et ne garde que la dernière image : si sa connexion
  * est lente, les images intermédiaires sont sautées au lieu de s’accumuler en mémoire.
  */
+/** Accès aux clips de la caméra pour la galerie distante. */
+internal interface LiveGallery {
+    /** Clips récents, chacun décrit par `id`, `name`, `start` (ms), `dur` (ms), `size` (octets). */
+    fun list(): List<Map<String, String>>
+    fun thumbnail(id: Long): ByteArray?
+    fun open(id: Long): InputStream?
+}
+
 internal class LiveServer(
     private val port: Int,
     private val secretProvider: () -> ByteArray?,
     private val helloProvider: () -> Map<String, String>,
-    private val onViewersChanged: (Int) -> Unit
+    private val onViewersChanged: (Int) -> Unit,
+    /** Commande d’un spectateur (ex. `op=exposure&value=2`), appelée hors du thread principal. */
+    private val onRequest: (Map<String, String>) -> Unit = {},
+    private val gallery: LiveGallery? = null
 ) {
+    private val gallerySockets = CopyOnWriteArrayList<Socket>()
     private var serverSocket: ServerSocket? = null
     private val viewers = CopyOnWriteArrayList<Viewer>()
     private val pendingHandshakes = AtomicInteger()
@@ -61,6 +74,7 @@ internal class LiveServer(
         try { serverSocket?.close() } catch (_: IOException) { }
         serverSocket = null
         viewers.forEach { if (sayGoodbye) it.goodbye() else it.close() }
+        gallerySockets.forEach { try { it.close() } catch (_: IOException) { } }
         watchdog.shutdownNow()
     }
 
@@ -108,6 +122,13 @@ internal class LiveServer(
             // Depuis 1.5.1 : `name=…&mode=alerts|live` ; avant : le nom seul.
             val text = String(auth.payload, Charsets.UTF_8)
             val fields = if (text.contains('=')) LiveProtocol.decodeFields(text) else mapOf("name" to text)
+            if (fields["mode"] == "gallery") {
+                if (gallery == null || gallerySockets.size >= MAX_GALLERY) throw IOException("Galerie indisponible")
+                channel.send(LiveProtocol.TYPE_HELLO, LiveProtocol.encodeFields(helloProvider()).toByteArray(Charsets.UTF_8))
+                pendingHandshakes.decrementAndGet()
+                serveGallery(socket, channel, gallery)
+                return
+            }
             val alertsOnly = fields["mode"] == "alerts"
             val sameKind = viewers.count { it.alertsOnly == alertsOnly }
             if (sameKind >= if (alertsOnly) MAX_ALERT_LISTENERS else MAX_VIEWERS) throw IOException("Trop de spectateurs")
@@ -126,6 +147,9 @@ internal class LiveServer(
         Log.i(TAG, "Live viewer connected: ${viewer.name} from ${socket.inetAddress?.hostAddress}")
         onViewersChanged(viewerCount)
         if (lastStatus.isNotEmpty()) viewer.offerStatus(LiveProtocol.encodeFields(lastStatus).toByteArray(Charsets.UTF_8))
+        // Les envois sont surveillés par le chien de garde ; les lectures attendent sans limite les commandes.
+        try { socket.soTimeout = 0 } catch (_: IOException) { }
+        Thread({ viewer.readLoop() }, "lynx-live-reader").start()
         try { viewer.sendLoop() } finally {
             viewer.close()
             viewers -= viewer
@@ -170,13 +194,67 @@ internal class LiveServer(
             }
         }
 
+        /** Commandes du spectateur (anciennes versions : rien n’arrive, le thread attend la fermeture). */
+        fun readLoop() {
+            try {
+                while (true) {
+                    val record = channel.receive()
+                    if (record.type == LiveProtocol.TYPE_REQUEST) {
+                        try { onRequest(LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))) } catch (error: Exception) { Log.w(TAG, "Live request failed", error) }
+                    }
+                }
+            } catch (_: Exception) { close() }
+        }
+
         fun close() { try { socket.close() } catch (_: IOException) { } }
+    }
+
+    /** Galerie distante : une requête à la fois (liste, miniature, fichier en morceaux). */
+    private fun serveGallery(socket: Socket, channel: SecureChannel, gallery: LiveGallery) {
+        gallerySockets += socket
+        Log.i(TAG, "Remote gallery opened from ${socket.inetAddress?.hostAddress}")
+        try {
+            socket.soTimeout = GALLERY_IDLE_MS
+            while (running) {
+                val record = channel.receive()
+                if (record.type != LiveProtocol.TYPE_REQUEST) continue
+                val request = LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))
+                val id = request["id"]?.toLongOrNull()
+                when (request["op"]) {
+                    "list" -> channel.send(LiveProtocol.TYPE_LIST,
+                        gallery.list().joinToString("\n") { LiveProtocol.encodeFields(it) }.toByteArray(Charsets.UTF_8))
+                    "thumb" -> channel.send(LiveProtocol.TYPE_THUMB, id?.let { gallery.thumbnail(it) } ?: ByteArray(0))
+                    "file" -> {
+                        val input = id?.let { gallery.open(it) }
+                        if (input == null) { channel.send(LiveProtocol.TYPE_ERROR, "Vidéo introuvable".toByteArray()); continue }
+                        input.use {
+                            val buffer = ByteArray(CHUNK_BYTES)
+                            while (true) {
+                                val read = it.read(buffer)
+                                if (read < 0) break
+                                if (read > 0) channel.send(LiveProtocol.TYPE_CHUNK, buffer.copyOf(read))
+                            }
+                        }
+                        channel.send(LiveProtocol.TYPE_END)
+                    }
+                    else -> channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
+                }
+            }
+        } catch (_: Exception) {
+            // Spectateur parti ou inactif trop longtemps.
+        } finally {
+            gallerySockets -= socket
+            try { socket.close() } catch (_: IOException) { }
+        }
     }
 
     companion object {
         private const val TAG = "LynxLive"
         private const val MAX_VIEWERS = 3
         private const val MAX_ALERT_LISTENERS = 5
+        private const val MAX_GALLERY = 2
+        private const val GALLERY_IDLE_MS = 120_000
+        private const val CHUNK_BYTES = 256 * 1024
         private const val ALERT_KEEPALIVE_MS = 25_000L
         private const val MAX_PENDING = 4
         private const val HANDSHAKE_TIMEOUT_MS = 6_000

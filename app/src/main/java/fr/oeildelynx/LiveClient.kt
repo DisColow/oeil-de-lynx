@@ -66,6 +66,52 @@ internal class LiveClient(
     /** Vrai : connexion d’alerte (état seulement, aucune image), utilisée par [AlertService]. */
     private val alertsOnly: Boolean = false
 ) {
+    private var mode = if (alertsOnly) "alerts" else "live"
+    @Volatile private var activeChannel: SecureChannel? = null
+
+    /** Envoie une commande à la caméra (ex. exposition) si la connexion est ouverte. */
+    fun sendRequest(fields: Map<String, String>) {
+        val channel = activeChannel ?: return
+        Thread {
+            try { channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(fields).toByteArray(Charsets.UTF_8)) } catch (_: IOException) { }
+        }.start()
+    }
+
+    /** Connexion de galerie : requêtes/réponses synchrones (bloquant, hors du thread principal). */
+    class GallerySession internal constructor(private val socket: Socket, private val channel: SecureChannel) : java.io.Closeable {
+        @Synchronized fun request(fields: Map<String, String>): LiveRecord {
+            channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(fields).toByteArray(Charsets.UTF_8))
+            val record = channel.receive()
+            // Une caméra en version antérieure à 1.7.0 envoie le direct au lieu de répondre.
+            if (record.type == LiveProtocol.TYPE_FRAME || record.type == LiveProtocol.TYPE_STATUS || record.type == LiveProtocol.TYPE_KEEPALIVE) {
+                throw IOException("Mets à jour Œil de Lynx sur le téléphone caméra pour accéder à sa galerie.")
+            }
+            return record
+        }
+
+        /** Télécharge un clip morceau par morceau ; [onProgress] reçoit le nombre d’octets reçus. */
+        @Synchronized fun download(id: String, output: java.io.OutputStream, onProgress: (Long) -> Unit) {
+            channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(mapOf("op" to "file", "id" to id)).toByteArray(Charsets.UTF_8))
+            var received = 0L
+            while (true) {
+                val record = channel.receive()
+                when (record.type) {
+                    LiveProtocol.TYPE_CHUNK -> { output.write(record.payload); received += record.payload.size; onProgress(received) }
+                    LiveProtocol.TYPE_END -> return
+                    LiveProtocol.TYPE_ERROR -> throw IOException(String(record.payload, Charsets.UTF_8))
+                }
+            }
+        }
+
+        override fun close() { try { socket.close() } catch (_: IOException) { } }
+    }
+
+    fun openGallery(): GallerySession {
+        mode = "gallery"
+        val connected = connect()
+        connected.socket.soTimeout = 60_000
+        return GallerySession(connected.socket, connected.channel)
+    }
     interface Listener {
         fun onState(text: String, connected: Boolean)
         fun onFrame(bitmap: Bitmap)
@@ -106,6 +152,7 @@ internal class LiveClient(
                 current = connected.socket
                 failures = 0
                 socket = current
+                activeChannel = connected.channel
                 if (!flag.get()) break
                 val route = if (isLocal(connected.socket.inetAddress)) "Wi-Fi local" else "Internet"
                 listener.onState("En direct · $route", true)
@@ -125,6 +172,7 @@ internal class LiveClient(
                 )
                 waitMs = delay
             } finally {
+                activeChannel = null
                 current?.let { closeQuietly(it) }
                 if (socket === current) socket = null
             }
@@ -225,7 +273,7 @@ internal class LiveClient(
                 BufferedInputStream(socket.getInputStream(), 64 * 1024), BufferedOutputStream(socket.getOutputStream()), camera.key
             )
             // À partir d’ici, la caméra a répondu : une fermeture immédiate signifie qu’elle refuse notre clé.
-            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to if (alertsOnly) "alerts" else "live"))
+            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode))
             channel.send(LiveProtocol.TYPE_AUTH, auth.toByteArray(Charsets.UTF_8))
             val hello = try { channel.receive() } catch (error: EOFException) { throw KeyRejected() } catch (error: java.net.SocketException) { throw KeyRejected() }
             if (hello.type != LiveProtocol.TYPE_HELLO) throw IOException("Réponse inattendue de la caméra")

@@ -1,6 +1,10 @@
 package fr.oeildelynx
 
+import android.content.Intent
 import android.graphics.Bitmap
+import android.widget.SeekBar
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -22,6 +26,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     private lateinit var waiting: TextView
     private var client: LiveClient? = null
     private var shownBitmap: Bitmap? = null
+    private var lastStatus: Map<String, String> = emptyMap()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,10 +62,44 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             setPadding(dp(10), dp(5), dp(10), dp(5)); background = LynxUi.rounded(this@LiveActivity, 0xe61b211d.toInt()); visibility = View.GONE
         }
         top.addView(recBadge)
+        top.addView(iconButton("☀", "Exposition") { showExposure() })
+        top.addView(iconButton("▧", "Galerie de la caméra") {
+            startActivity(Intent(this, RemoteGalleryActivity::class.java).putExtra(EXTRA_CAMERA_ID, camera.id))
+        })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         setContentView(root)
 
         client = LiveClient(applicationContext, camera.id, this)
+    }
+
+    private fun iconButton(icon: String, description: String, action: () -> Unit) = TextView(this).apply {
+        text = icon; textSize = 20f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); contentDescription = description
+        background = LynxUi.rounded(this@LiveActivity, 0x553b4941)
+        layoutParams = LinearLayout.LayoutParams(LynxUi.dp(this@LiveActivity, 42), LynxUi.dp(this@LiveActivity, 42)).apply { leftMargin = LynxUi.dp(this@LiveActivity, 8) }
+        setOnClickListener { action() }
+    }
+
+    /** Règle l’exposition de la caméra à distance ; la plage vient de l’état envoyé par la caméra. */
+    private fun showExposure() {
+        val status = lastStatus
+        val min = status["expmin"]?.toIntOrNull(); val max = status["expmax"]?.toIntOrNull()
+        val step = status["expstep"]?.toFloatOrNull() ?: 0f
+        if (min == null || max == null) { Toast.makeText(this, "Connexion en cours, ou caméra à mettre à jour (1.7.0).", Toast.LENGTH_LONG).show(); return }
+        if (max <= min) { Toast.makeText(this, "Cette caméra ne permet pas de régler l’exposition.", Toast.LENGTH_LONG).show(); return }
+        val current = status["exp"]?.toIntOrNull() ?: 0
+        val value = TextView(this).apply { textSize = 18f; gravity = Gravity.CENTER; text = Exposure.label(current, step) }
+        val seek = SeekBar(this).apply { this.max = max - min; progress = current - min }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) { value.text = Exposure.label(min + progress, step) }
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+            // Une seule commande au relâchement : évite d’inonder la connexion pendant le glissement.
+            override fun onStopTrackingTouch(bar: SeekBar) { client?.sendRequest(mapOf("op" to "exposure", "value" to (min + bar.progress).toString())) }
+        })
+        val pad = LynxUi.dp(this, 20)
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(value); addView(seek) }
+        AlertDialog.Builder(this).setTitle("Exposition de la caméra").setView(content)
+            .setNeutralButton("Auto") { _, _ -> client?.sendRequest(mapOf("op" to "exposure", "value" to "0")) }
+            .setPositiveButton("OK", null).show()
     }
 
     override fun onStart() {
@@ -100,6 +139,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
+        lastStatus = fields
         recBadge.visibility = if (fields["rec"] == "1") View.VISIBLE else View.GONE
         fields["n"]?.takeIf { it.isNotBlank() }?.let { title.text = it }
     }

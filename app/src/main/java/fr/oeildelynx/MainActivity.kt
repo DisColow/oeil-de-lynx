@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var statusLabel: TextView
     private lateinit var recBadge: LinearLayout
     private var provider: ProcessCameraProvider? = null
+    private var previewCamera: androidx.camera.core.Camera? = null
     // L’état de l’interface est conservé dans SharedPreferences si Android recrée l’Activity.
     private var surveillance = false
     private var previewShown = true
@@ -253,7 +254,7 @@ class MainActivity : ComponentActivity() {
         try {
             cameraProvider.unbindAll()
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-            cameraProvider.bindToLifecycle(this, selector(), preview)
+            previewCamera = cameraProvider.bindToLifecycle(this, selector(), preview).also { Exposure.apply(this, it) }
         } catch (_: Exception) { toast("Impossible d’afficher l’aperçu caméra.") }
     }
 
@@ -359,6 +360,7 @@ class MainActivity : ComponentActivity() {
     private fun showMenu() {
         val soundOn = prefs.getBoolean(MonitorService.PREF_SOUND_TRIGGER, false)
         val entries = arrayOf(
+            "Exposition : ${Exposure.range(this).let { Exposure.label(it.index, it.step) }}",
             "Sensibilité au mouvement : ${MonitorService.motionSensitivity(this).label}",
             if (soundOn) "Déclencher aussi sur le son : oui" else "Déclencher aussi sur le son : non",
             "Durée maximale des clips",
@@ -367,17 +369,55 @@ class MainActivity : ComponentActivity() {
         )
         AlertDialog.Builder(this).setTitle("Œil de Lynx").setItems(entries) { _, which ->
             when (which) {
-                0 -> showSensitivity()
-                1 -> {
+                0 -> showExposure()
+                1 -> showSensitivity()
+                2 -> {
                     prefs.edit().putBoolean(MonitorService.PREF_SOUND_TRIGGER, !soundOn).apply()
                     val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
                     toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
                 }
-                2 -> showRules()
-                3 -> startActivity(Intent(this, PairingActivity::class.java))
-                4 -> startActivity(Intent(this, ViewerActivity::class.java))
+                3 -> showRules()
+                4 -> startActivity(Intent(this, PairingActivity::class.java))
+                5 -> startActivity(Intent(this, ViewerActivity::class.java))
             }
         }.setNegativeButton("Fermer", null).show()
+    }
+
+    /** Curseur de correction d’exposition, appliqué en direct à l’aperçu ou à la surveillance. */
+    private fun showExposure() {
+        val range = Exposure.range(this)
+        if (!range.supported) { toast("Cette caméra ne permet pas de régler l’exposition."); return }
+        val value = TextView(this).apply { textSize = 18f; gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(4)) }
+        val seek = SeekBar(this).apply { max = range.max - range.min; progress = range.index - range.min }
+        fun show(index: Int) { value.text = Exposure.label(index, range.step) }
+        show(range.index)
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                val index = range.min + progress
+                show(index)
+                if (fromUser) applyExposure(index)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+            override fun onStopTrackingTouch(bar: SeekBar) {}
+        })
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(4), dp(20), 0)
+            addView(value); addView(seek)
+            addView(TextView(this@MainActivity).apply {
+                text = "Vers la gauche : image plus sombre. Vers la droite : plus claire (utile la nuit)."
+                textSize = 12f; setPadding(0, dp(8), 0, 0)
+            })
+        }
+        AlertDialog.Builder(this).setTitle("Exposition").setView(content)
+            .setNeutralButton("Auto") { _, _ -> applyExposure(0) }
+            .setPositiveButton("OK", null).show()
+    }
+
+    private fun applyExposure(index: Int) {
+        Exposure.setIndex(this, index)
+        if (surveillance) {
+            startService(Intent(this, MonitorService::class.java).setAction(MonitorService.ACTION_SET_EXPOSURE).putExtra(MonitorService.EXTRA_EXPOSURE, index))
+        } else previewCamera?.let { Exposure.apply(this, it) }
     }
 
     /** Part de l’image qui doit bouger : élevée = petit mouvement suffit, faible = moins de fausses alertes. */

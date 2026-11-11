@@ -118,6 +118,33 @@ class LiveProtocolTest {
         assertEquals("[2a01::1]:47474", PairingCode.formatHost("2a01::1", 47474))
     }
 
+    @Test fun galleryClipIsDownloadedInChunks() {
+        val key = LiveProtocol.newKey()
+        val clip = ByteArray(600_000) { (it % 251).toByte() }
+        ServerSocket(0).use { listener ->
+            val pool = Executors.newSingleThreadExecutor()
+            val camera = pool.submit {
+                listener.accept().use { socket ->
+                    val channel = LiveProtocol.serverHandshake(socket.getInputStream(), socket.getOutputStream(), key)
+                    val request = LiveProtocol.decodeFields(String(channel.receive().payload))
+                    assertEquals("file", request["op"]); assertEquals("42", request["id"])
+                    clip.toList().chunked(256 * 1024).forEach { channel.send(LiveProtocol.TYPE_CHUNK, it.toByteArray()) }
+                    channel.send(LiveProtocol.TYPE_END)
+                }
+            }
+            Socket("127.0.0.1", listener.localPort).use { socket ->
+                socket.soTimeout = 3000
+                val channel = LiveProtocol.clientHandshake(socket.getInputStream(), socket.getOutputStream(), key)
+                val output = ByteArrayOutputStream()
+                var progress = 0L
+                LiveClient.GallerySession(socket, channel).download("42", output) { progress = it }
+                assertArrayEquals(clip, output.toByteArray())
+                assertEquals(clip.size.toLong(), progress)
+            }
+            camera.get(5, TimeUnit.SECONDS); pool.shutdownNow()
+        }
+    }
+
     @Test fun mergedHostsPreferFreshAddresses() {
         assertEquals(listOf("b:1", "a:1", "c:1"), ViewerStore.mergeHosts(listOf("b:1", "a:1"), listOf("a:1", "c:1")))
     }
