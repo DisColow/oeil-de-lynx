@@ -59,13 +59,12 @@ class RemoteGalleryActivity : ComponentActivity() {
 
     private fun buildList(cameraName: String) {
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(LynxUi.header(this, "Galerie", "CLIPS DE ${cameraName.uppercase(Locale.getDefault())}") { finish() })
-        status = LynxUi.body(this, "Connexion à la caméra…").apply { setPadding(dp(18), 0, dp(18), dp(8)) }
+        page.addView(LynxUi.header(this, "Galerie", "Clips de $cameraName",
+            LynxUi.iconButton(this, R.drawable.ic_refresh, "Actualiser", 0x66223029) { load() }) { finish() })
+        status = LynxUi.body(this, "Connexion à la caméra…", 13.5f).apply { setPadding(dp(20), 0, dp(20), dp(6)) }
         page.addView(status)
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), dp(16)) }
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), dp(20)) }
         page.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
-        page.addView(LynxUi.button(this, "Actualiser", LynxUi.CARD) { load() },
-            LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), 0, dp(16), dp(16)) })
         root.removeAllViews()
         root.addView(page)
     }
@@ -105,17 +104,24 @@ class RemoteGalleryActivity : ComponentActivity() {
         status.text = if (clips.isEmpty()) "Aucun clip sur la caméra." else "${clips.size} clip(s) · toucher pour télécharger et lire"
         return clips.map { clip ->
             val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(10), dp(12), dp(10))
-                background = LynxUi.rounded(this@RemoteGalleryActivity, LynxUi.CARD, 16)
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(10), dp(14), dp(10))
+                background = LynxUi.pressable(this@RemoteGalleryActivity, LynxUi.CARD, 20)
                 setOnClickListener { download(clip) }
             }
-            val thumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff222a25.toInt()) }
-            row.addView(thumb, LinearLayout.LayoutParams(dp(102), dp(76)))
-            val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0) }
+            val frame = FrameLayout(this).apply { background = LynxUi.rounded(this@RemoteGalleryActivity, 0xff222a25.toInt(), 14); clipToOutline = true }
+            val thumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            frame.addView(thumb, FrameLayout.LayoutParams(-1, -1))
+            frame.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ic_play); val pad = dp(7); setPadding(pad, pad, pad, pad); background = LynxUi.circle(0x99000000.toInt())
+            }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+            row.addView(frame, LinearLayout.LayoutParams(dp(112), dp(80)))
+            val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
             details.addView(TextView(this).apply {
-                text = dateFormat.format(Date(clip.start)); textSize = 13f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
+                text = SimpleDateFormat("EEE d MMM", Locale.FRANCE).format(Date(clip.start)).replaceFirstChar { it.titlecase(Locale.FRANCE) }
+                textSize = 15f; typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); setTextColor(LynxUi.TEXT)
             })
-            details.addView(LynxUi.body(this, "${formatDuration(clip.duration)} · ${formatSize(clip.size)}", 12f).apply { setPadding(0, dp(6), 0, 0) })
+            details.addView(LynxUi.body(this, SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(Date(clip.start)), 13f).apply { setPadding(0, dp(3), 0, 0) })
+            details.addView(LynxUi.body(this, "${formatDuration(clip.duration)} · ${formatSize(clip.size)}", 12f, LynxUi.ACCENT).apply { setPadding(0, dp(6), 0, 0) })
             row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(9) })
             thumb
@@ -162,7 +168,7 @@ class RemoteGalleryActivity : ComponentActivity() {
     private fun play(file: File, clip: Clip) {
         root.removeAllViews()
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK) }
-        page.addView(LynxUi.header(this, "Lecture", dateFormat.format(Date(clip.start))) { showList() })
+        page.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start))) { showList() })
         // Fond noir sur le conteneur, pas sur la VideoView : il masquerait l’image.
         val stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val video = VideoView(this)

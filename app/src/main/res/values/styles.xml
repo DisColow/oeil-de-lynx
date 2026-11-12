@@ -1,8 +1,33 @@
 <resources>
-    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!-- Thème sombre fixe : tous les écrans sont sombres, les boîtes de dialogue suivent. -->
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#286B58</item>
+        <item name="colorPrimary">#2F8F63</item>
+        <item name="colorPrimaryDark">#0B110E</item>
+        <item name="colorAccent">#7FDCA4</item>
+        <item name="colorControlActivated">#7FDCA4</item>
+        <item name="android:colorAccent">#7FDCA4</item>
+        <item name="android:windowBackground">@color/lynx_background</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="alertDialogTheme">@style/LynxDialog</item>
+        <item name="android:alertDialogTheme">@style/LynxDialog</item>
+    </style>
+
+    <style name="LynxDialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="colorAccent">#7FDCA4</item>
+        <item name="colorControlActivated">#7FDCA4</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+        <item name="android:textColorPrimary">#F1F5F2</item>
+        <item name="android:textColorSecondary">#98A79E</item>
+        <item name="buttonBarPositiveButtonStyle">@style/LynxDialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/LynxDialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/LynxDialogButton</item>
+    </style>
+
+    <style name="LynxDialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">#7FDCA4</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">15sp</item>
     </style>
 
     <!-- Thème AndroidX : affiche l’œil de chat avant que l’Activity ne dessine son HUD. -->

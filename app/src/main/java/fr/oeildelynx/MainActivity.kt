@@ -8,7 +8,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import androidx.annotation.DrawableRes
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -37,7 +39,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var maskButtonIcon: ImageView
     private lateinit var maskButtonLabel: TextView
     private lateinit var previewControl: LinearLayout
-    private lateinit var recordButtonIcon: TextView
+    private lateinit var recordButtonIcon: ImageView
+    private lateinit var recordInner: View
+    private lateinit var recordRing: View
+    private lateinit var statusDot: View
     private lateinit var recordButtonLabel: TextView
     private lateinit var statusLabel: TextView
     private lateinit var recBadge: LinearLayout
@@ -121,7 +126,7 @@ class MainActivity : ComponentActivity() {
 
     /** Construit en code l’aperçu et les commandes pour occuper tout l’écran. */
     private fun buildHud() {
-        val root = FrameLayout(this).apply { setBackgroundColor(0xff0d1210.toInt()) }
+        val root = FrameLayout(this).apply { setBackgroundColor(LynxUi.BACKGROUND) }
         previewView = PreviewView(this).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -131,107 +136,129 @@ class MainActivity : ComponentActivity() {
         // Le masque opaque recouvre l’image sans arrêter la session caméra de surveillance.
         mask = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            setBackgroundColor(0xff101713.toInt()); visibility = View.GONE
+            setBackgroundColor(LynxUi.BACKGROUND); visibility = View.GONE
         }
-        val maskIcon = TextView(this).apply { text = "◉"; textSize = 52f; gravity = Gravity.CENTER; setTextColor(0xffa9c5b4.toInt()) }
-        val maskTitle = TextView(this).apply { text = "Aperçu masqué"; textSize = 21f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(6)) }
-        val maskInfo = TextView(this).apply { text = "La surveillance continue en arrière-plan"; textSize = 14f; gravity = Gravity.CENTER; setTextColor(0xffaab5ae.toInt()) }
-        mask.addView(maskIcon); mask.addView(maskTitle); mask.addView(maskInfo)
+        mask.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_eye_off); imageTintList = ColorStateList.valueOf(LynxUi.ACCENT)
+            val pad = dp(22); setPadding(pad, pad, pad, pad); background = LynxUi.circle(0xff17261d.toInt())
+        }, LinearLayout.LayoutParams(dp(84), dp(84)))
+        mask.addView(LynxUi.title(this, "Aperçu masqué", 21f).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)) })
+        mask.addView(LynxUi.body(this, "La surveillance continue : mouvements détectés\net clips enregistrés comme d’habitude.").apply { gravity = Gravity.CENTER })
         root.addView(mask, FrameLayout.LayoutParams(-1, -1))
 
+        // Barre du haut : marque, état, menu.
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(30), dp(18), dp(12)); background = gradient(0xdd101713.toInt(), 0, 0, dp(20), bottom = true)
+            setPadding(dp(16), dp(34), dp(14), dp(28)); background = scrim(fromTop = true)
         }
-        val branding = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        branding.addView(TextView(this).apply { text = "ŒIL DE LYNX"; textSize = 16f; letterSpacing = .13f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD })
-        branding.addView(TextView(this).apply { text = "CAMÉRA DE SURVEILLANCE"; textSize = 10f; letterSpacing = .12f; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(3), 0, 0) })
+        top.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_cat_eye_monochrome); imageTintList = ColorStateList.valueOf(LynxUi.ACCENT)
+            background = LynxUi.rounded(this@MainActivity, 0xcc102018.toInt(), 12)
+        }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        val branding = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(11), 0, dp(8), 0) }
+        branding.addView(TextView(this).apply {
+            text = "Œil de Lynx"; textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); maxLines = 1
+        })
+        branding.addView(TextView(this).apply { text = "Caméra de surveillance"; textSize = 11.5f; setTextColor(0xffc3cec7.toInt()); maxLines = 1 })
         top.addView(branding, LinearLayout.LayoutParams(0, -2, 1f))
-        top.addView(statusPill())
-        val settings = TextView(this).apply {
-            text = "⚙"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-            background = roundBackground(0x553b4941); contentDescription = "Menu"
-            setOnClickListener { showMenu() }
-        }
-        top.addView(settings, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(10) })
+        val (chip, parts) = LynxUi.chip(this, "PRÊT", LynxUi.ACCENT, 0x99101713.toInt())
+        statusDot = parts.first; statusLabel = parts.second
+        top.addView(chip)
+        top.addView(LynxUi.iconButton(this, R.drawable.ic_tune, "Menu", 0x55101713) { showMenu() }.apply {
+            (layoutParams as LinearLayout.LayoutParams).leftMargin = dp(10)
+        })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
+        // Pastille REC clignotante pendant la surveillance.
         recBadge = LinearLayout(this).apply {
-            gravity = Gravity.CENTER; setPadding(dp(14), dp(8), dp(14), dp(8)); background = roundBackground(0xe61b211d.toInt()); visibility = View.GONE
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(6), dp(14), dp(6))
+            background = LynxUi.rounded(this@MainActivity, 0xd9200f10.toInt(), 20); visibility = View.GONE
         }
-        val recDot = TextView(this).apply { text = "●"; textSize = 15f; setTextColor(0xfffa4545.toInt()); setPadding(0, 0, dp(7), 0) }
-        recBadge.addView(recDot)
-        recBadge.addView(TextView(this).apply { text = "REC"; textSize = 13f; letterSpacing = .13f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD })
-        root.addView(recBadge, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM).apply { bottomMargin = dp(127) })
+        recBadge.addView(View(this).apply { background = LynxUi.circle(LynxUi.DANGER) }, LinearLayout.LayoutParams(dp(9), dp(9)).apply { rightMargin = dp(8) })
+        recBadge.addView(TextView(this).apply {
+            text = "REC"; textSize = 12f; letterSpacing = .14f; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        })
+        root.addView(recBadge, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(104) })
 
+        // Barre du bas : galerie, grand bouton de surveillance, changement de caméra.
         val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(20))
-            background = gradient(0xef101713.toInt(), 0, 0, dp(22), bottom = true)
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(20), dp(40), dp(20), dp(22)); background = scrim(fromTop = false)
         }
-        val controls = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
-        val previewAction = cameraHudButton("Masquer caméra") { togglePreview() }
+        val previewAction = cameraHudButton("Masquer l’aperçu") { togglePreview() }
         maskButtonIcon = previewAction.first; maskButtonLabel = previewAction.second; previewControl = previewAction.third
-        controls.addView(previewControl, LinearLayout.LayoutParams(0, dp(76), 1f))
-        controls.addView(hudButton("⇄", "Avant / arrière") { switchCamera() }.third, LinearLayout.LayoutParams(0, dp(76), 1f))
-        controls.addView(hudButton("▧", "Galerie") { openGallery() }.third, LinearLayout.LayoutParams(0, dp(76), 1f))
-        val record = hudButton("▶", "Démarrer") { toggleMonitoring() }
-        recordButtonIcon = record.first; recordButtonLabel = record.second
-        controls.addView(record.third, LinearLayout.LayoutParams(0, dp(76), 1f))
-        bottom.addView(controls)
+        bottom.addView(previewControl, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(18) })
+
+        val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; orientation = LinearLayout.HORIZONTAL }
+        controls.addView(sideButton(R.drawable.ic_gallery, "Galerie") { openGallery() }, LinearLayout.LayoutParams(0, -2, 1f))
+        controls.addView(recordButton(), LinearLayout.LayoutParams(-2, -2))
+        controls.addView(sideButton(R.drawable.ic_flip_camera, "Avant / arrière") { switchCamera() }, LinearLayout.LayoutParams(0, -2, 1f))
+        bottom.addView(controls, LinearLayout.LayoutParams(-1, -2))
         bottom.addView(TextView(this).apply {
             text = "Un clip est enregistré dès qu’un mouvement est détecté, jusqu’à 10 s après la fin du mouvement."
-            textSize = 11f; gravity = Gravity.CENTER; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(8), 0, 0)
+            textSize = 11.5f; gravity = Gravity.CENTER; setTextColor(0xffb3c0b8.toInt()); setPadding(dp(12), dp(16), dp(12), 0)
         })
         root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         setContentView(root)
         syncControls()
     }
 
-    private fun statusPill() = LinearLayout(this).apply {
-        gravity = Gravity.CENTER; setPadding(dp(10), dp(6), dp(10), dp(6)); background = roundBackground(0x443b4941)
-        addView(TextView(this@MainActivity).apply { text = "●"; textSize = 10f; setTextColor(0xff83d4a1.toInt()); setPadding(0, 0, dp(6), 0) })
-        statusLabel = TextView(this@MainActivity).apply {
-            text = if (surveillance) "SURVEILLANCE ACTIVE" else "PRÊT"
-            textSize = 10f; letterSpacing = .08f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
-        }
-        addView(statusLabel)
+    /** Dégradé sombre derrière les barres, pour rester lisible sur n’importe quelle image. */
+    private fun scrim(fromTop: Boolean) = GradientDrawable(
+        if (fromTop) GradientDrawable.Orientation.TOP_BOTTOM else GradientDrawable.Orientation.BOTTOM_TOP,
+        intArrayOf(0xf20b110e.toInt(), 0xb30b110e.toInt(), 0x000b110e)
+    )
+
+    /** Bouton latéral rond avec libellé dessous. */
+    private fun sideButton(@DrawableRes iconRes: Int, label: String, action: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+        addView(LynxUi.iconButton(this@MainActivity, iconRes, label, 0x66223029, 56) { action() })
+        addView(TextView(this@MainActivity).apply {
+            text = label; textSize = 11.5f; gravity = Gravity.CENTER; setTextColor(0xffd5ded8.toInt()); maxLines = 1; setPadding(0, dp(7), 0, 0)
+        })
     }
 
-    private fun hudButton(icon: String, label: String, action: () -> Unit): Triple<TextView, TextView, LinearLayout> {
-        val iconView = TextView(this).apply { text = icon; textSize = 25f; gravity = Gravity.CENTER; setTextColor(Color.WHITE) }
-        val labelView = TextView(this).apply { text = label; textSize = 10f; gravity = Gravity.CENTER; setTextColor(0xffc6d0c9.toInt()); maxLines = 1 }
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = roundBackground(0x333b4941)
-            addView(iconView, LinearLayout.LayoutParams(-1, 0, 1f)); addView(labelView)
-            setOnClickListener { action() }
+    /** Grand bouton Démarrer / Arrêter : anneau blanc, disque vert (prêt) ou rouge (surveillance). */
+    private fun recordButton() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(10), 0, dp(10), 0)
+        val ring = FrameLayout(this@MainActivity).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x33ffffff); setStroke(dp(3), Color.WHITE) }
+            contentDescription = "Démarrer la surveillance"
+            setOnClickListener { toggleMonitoring() }
         }
-        return Triple(iconView, labelView, container)
+        recordInner = View(this@MainActivity)
+        ring.addView(recordInner, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
+        recordButtonIcon = ImageView(this@MainActivity).apply { setImageResource(R.drawable.ic_play) }
+        ring.addView(recordButtonIcon, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+        recordRing = ring
+        addView(ring, LinearLayout.LayoutParams(dp(80), dp(80)))
+        recordButtonLabel = TextView(this@MainActivity).apply {
+            textSize = 12.5f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setPadding(0, dp(8), 0, 0)
+        }
+        addView(recordButtonLabel)
     }
 
+    /** Pastille « Masquer / Afficher l’aperçu », utilisable pendant la surveillance. */
     private fun cameraHudButton(label: String, action: () -> Unit): Triple<ImageView, TextView, LinearLayout> {
         val iconView = AppCompatImageView(this).apply {
             setImageResource(R.drawable.ic_camera)
             contentDescription = label
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(25), dp(12), dp(25), dp(8))
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
         val labelView = TextView(this).apply {
-            text = label; textSize = 10f; gravity = Gravity.CENTER
-            setTextColor(0xffc6d0c9.toInt()); maxLines = 1
+            text = label; textSize = 13f; setTextColor(Color.WHITE); maxLines = 1
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
         val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = roundBackground(0x333b4941)
-            addView(iconView, LinearLayout.LayoutParams(-1, 0, 1f)); addView(labelView)
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(9), dp(18), dp(9))
+            background = LynxUi.pressable(this@MainActivity, 0x80223029.toInt(), 22)
+            addView(iconView, LinearLayout.LayoutParams(dp(20), dp(20)).apply { rightMargin = dp(9) }); addView(labelView)
             setOnClickListener { action() }
         }
         return Triple(iconView, labelView, container)
     }
-
-    private fun roundBackground(color: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(18).toFloat(); setColor(color) }
-    private fun gradient(color: Int, radius: Int, left: Int, horizontal: Int, top: Boolean = false, bottom: Boolean = false) = GradientDrawable(
-        if (top) GradientDrawable.Orientation.TOP_BOTTOM else GradientDrawable.Orientation.BOTTOM_TOP,
-        intArrayOf(color, 0x00101713)
-    ).apply { cornerRadii = if (top) floatArrayOf(0f,0f,0f,0f,radius.toFloat(),radius.toFloat(),radius.toFloat(),radius.toFloat()) else floatArrayOf(radius.toFloat(),radius.toFloat(),radius.toFloat(),radius.toFloat(),0f,0f,0f,0f) }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
@@ -279,7 +306,7 @@ class MainActivity : ComponentActivity() {
         mask.visibility = if (visible) View.GONE else View.VISIBLE
         maskButtonIcon.setImageResource(if (visible) R.drawable.ic_camera else R.drawable.ic_camera_off)
         maskButtonIcon.contentDescription = if (visible) "Caméra visible" else "Caméra masquée"
-        maskButtonLabel.text = if (visible) "Masquer caméra" else "Afficher caméra"
+        maskButtonLabel.text = if (visible) "Masquer l’aperçu" else "Afficher l’aperçu"
         MonitorService.updatePreviewSurface(previewView.surfaceProvider)
         handler.removeCallbacks(autoHide)
         if (visible && surveillance && scheduleHide) handler.postDelayed(autoHide, hideDelayMs)
@@ -330,22 +357,31 @@ class MainActivity : ComponentActivity() {
 
     private fun syncControls() {
         if (!::recordButtonIcon.isInitialized) return
-        recordButtonIcon.text = if (surveillance) "■" else "▶"
+        recordButtonIcon.setImageResource(if (surveillance) R.drawable.ic_stop else R.drawable.ic_play)
+        recordButtonIcon.imageTintList = ColorStateList.valueOf(if (surveillance) Color.WHITE else LynxUi.ON_ACCENT)
+        recordInner.background = LynxUi.circle(if (surveillance) LynxUi.DANGER else LynxUi.ACCENT)
+        recordRing.contentDescription = if (surveillance) "Arrêter la surveillance" else "Démarrer la surveillance"
         recordButtonLabel.text = if (surveillance) "Arrêter" else "Démarrer"
         previewControl.isEnabled = surveillance
-        previewControl.alpha = if (surveillance) 1f else .55f
+        // Hors surveillance l’aperçu est toujours visible : la pastille n’a pas d’usage.
+        previewControl.visibility = if (surveillance) View.VISIBLE else View.INVISIBLE
         if (!surveillance) {
             maskButtonIcon.setImageResource(R.drawable.ic_camera)
             maskButtonIcon.contentDescription = "Caméra visible"
-            maskButtonLabel.text = "Aperçu actif"
+            maskButtonLabel.text = "Masquer l’aperçu"
         }
         recBadge.visibility = if (surveillance) View.VISIBLE else View.GONE
         if (!surveillance) liveViewers = 0
         if (::statusLabel.isInitialized) statusLabel.text = when {
             surveillance && liveViewers > 0 -> "EN DIRECT · $liveViewers"
-            surveillance -> "SURVEILLANCE ACTIVE"
+            surveillance -> "SURVEILLANCE"
             else -> "PRÊT"
         }
+        if (::statusDot.isInitialized) statusDot.background = LynxUi.circle(when {
+            surveillance && liveViewers > 0 -> LynxUi.WARNING
+            surveillance -> LynxUi.DANGER
+            else -> LynxUi.ACCENT
+        })
     }
 
     private fun showRecordingState() {
@@ -356,31 +392,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Menu ⚙ : réglages des clips, appairage côté caméra et mode spectateur. */
+    /** Menu Réglages : réglages des clips, appairage côté caméra et mode spectateur. */
     private fun showMenu() {
         val soundOn = prefs.getBoolean(MonitorService.PREF_SOUND_TRIGGER, false)
-        val entries = arrayOf(
-            "Exposition : ${Exposure.range(this).let { Exposure.label(it.index, it.step) }}",
-            "Sensibilité au mouvement : ${MonitorService.motionSensitivity(this).label}",
-            if (soundOn) "Déclencher aussi sur le son : oui" else "Déclencher aussi sur le son : non",
-            "Durée maximale des clips",
-            "Appairer un téléphone spectateur (direct)",
-            "Regarder une caméra (ce téléphone devient spectateur)"
+        val durations = mapOf(30_000 to "30 secondes", 90_000 to "1 min 30", 180_000 to "3 minutes", 300_000 to "5 minutes", 600_000 to "10 minutes")
+        val items = listOf(
+            LynxUi.SheetItem(R.drawable.ic_sun, "Exposition", Exposure.range(this).let { Exposure.label(it.index, it.step) }) { showExposure() },
+            LynxUi.SheetItem(R.drawable.ic_motion, "Sensibilité au mouvement", MonitorService.motionSensitivity(this).label) { showSensitivity() },
+            LynxUi.SheetItem(R.drawable.ic_mic, "Déclencher aussi sur le son", if (soundOn) "Oui" else "Non · mouvement seulement") {
+                prefs.edit().putBoolean(MonitorService.PREF_SOUND_TRIGGER, !soundOn).apply()
+                val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
+                toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
+            },
+            LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes") { showRules() },
+            LynxUi.SheetItem(R.drawable.ic_qr, "Appairer un téléphone spectateur", "QR code pour le direct et les alertes") { startActivity(Intent(this, PairingActivity::class.java)) },
+            LynxUi.SheetItem(R.drawable.ic_eye, "Regarder une caméra", "Ce téléphone devient spectateur") { startActivity(Intent(this, ViewerActivity::class.java)) }
         )
-        AlertDialog.Builder(this).setTitle("Œil de Lynx").setItems(entries) { _, which ->
-            when (which) {
-                0 -> showExposure()
-                1 -> showSensitivity()
-                2 -> {
-                    prefs.edit().putBoolean(MonitorService.PREF_SOUND_TRIGGER, !soundOn).apply()
-                    val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
-                    toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
-                }
-                3 -> showRules()
-                4 -> startActivity(Intent(this, PairingActivity::class.java))
-                5 -> startActivity(Intent(this, ViewerActivity::class.java))
-            }
-        }.setNegativeButton("Fermer", null).show()
+        LynxUi.sheet(this, "Réglages", items, sections = mapOf(0 to "Caméra et détection", 4 to "Direct entre téléphones"))
     }
 
     /** Curseur de correction d’exposition, appliqué en direct à l’aperçu ou à la surveillance. */

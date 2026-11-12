@@ -1,4 +1,5 @@
 <resources>
     <color name="lynx_icon_background">#082217</color>
     <color name="lynx_splash_background">#082217</color>
+    <color name="lynx_background">#0B110E</color>
 </resources>

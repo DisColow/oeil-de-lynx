@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.7.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.8.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.7.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.8.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -12,12 +12,12 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Les barres de navigation et d’état Android sont masquées dans l’écran caméra comme dans la galerie. Un balayage depuis le bord les affiche temporairement ; Android les masque ensuite automatiquement.
 - Splash screen de lancement et icône adaptative Android assortis : œil de chat vert sur fond vert forêt, avec pupille verticale.
 - Démarrage de la surveillance avec aperçu visible pendant 1 minute, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
-- Détection locale du mouvement, avec trois niveaux de sensibilité (⚙). Le déclenchement par le son est une option, désactivée par défaut.
+- Détection locale du mouvement, avec trois niveaux de sensibilité (Réglages). Le déclenchement par le son est une option, désactivée par défaut.
 - Enregistrement MP4 avec piste audio dès qu’un mouvement est détecté ; le clip s’arrête 10 secondes après la fin du mouvement. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
 - Notification Android en priorité haute (bannière et son) sur le téléphone caméra à chaque détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature (image prise à ~1 s du début, chargée en arrière-plan), début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
-- **Exposition réglable** (⚙ › Exposition, ou ☀ dans le direct depuis le téléphone spectateur) : image plus claire la nuit, plus sombre face à une fenêtre.
+- **Exposition réglable** (Réglages › Exposition, ou ☀ dans le direct depuis le téléphone spectateur) : image plus claire la nuit, plus sombre face à une fenêtre.
 - **Galerie à distance** : depuis le direct, le bouton ▧ liste les clips du téléphone caméra et les télécharge directement pour les lire sur le téléphone spectateur.
 - **Alertes sur le téléphone spectateur** : notification dès que la caméra détecte un mouvement (et si elle reste injoignable plus de 3 minutes), sans serveur de notifications.
 - **Direct vers un second téléphone** : un téléphone spectateur appairé par QR code regarde la caméra en temps réel, sur le même Wi-Fi ou depuis Internet. Le flux va directement du téléphone caméra au spectateur via la box internet de la caméra, sans serveur intermédiaire ; il est chiffré de bout en bout avec la clé échangée lors de l’appairage.
@@ -37,8 +37,8 @@ Le même APK sert aux deux rôles : le **téléphone caméra** (celui qui survei
 
 ### Appairer
 
-1. Sur le téléphone caméra : ⚙ › **Appairer un téléphone spectateur**. Un QR code s’affiche, avec l’état de la box et les adresses où la caméra sera joignable.
-2. Sur le téléphone spectateur : ⚙ › **Regarder une caméra** (ou appui long sur l’icône › **Regarder**), puis **Scanner le QR code d’une caméra**. À défaut, le code peut être envoyé par message (« Partager le code ») puis collé.
+1. Sur le téléphone caméra : Réglages › **Appairer un téléphone spectateur**. Un QR code s’affiche, avec l’état de la box et les adresses où la caméra sera joignable.
+2. Sur le téléphone spectateur : Réglages › **Regarder une caméra** (ou appui long sur l’icône › **Regarder**), puis **Scanner le QR code d’une caméra**. À défaut, le code peut être envoyé par message (« Partager le code ») puis collé.
 3. Démarrer la surveillance sur le téléphone caméra. Sur le spectateur, toucher le nom de la caméra : le direct s’affiche (environ 8 images/s en 640 × 480, sans son), avec l’indicateur REC lorsqu’un clip est en cours d’enregistrement.
 
 Le direct n’existe que pendant la surveillance : c’est le service de surveillance qui possède la caméra. Tant qu’aucun appairage n’a été créé, l’application n’ouvre aucun port. La notification de surveillance et la pastille du HUD indiquent le nombre de spectateurs connectés (3 au maximum).
@@ -67,14 +67,14 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 
 Dans l’écran du direct :
 
-- **☀** règle la correction d’exposition de la caméra (curseur en EV, bouton « Auto » pour revenir à 0). Le réglage est enregistré sur le téléphone caméra et réappliqué à chaque démarrage ; il se règle aussi sur place par ⚙ › Exposition.
+- **☀** règle la correction d’exposition de la caméra (curseur en EV, bouton « Auto » pour revenir à 0). Le réglage est enregistré sur le téléphone caméra et réappliqué à chaque démarrage ; il se règle aussi sur place par Réglages › Exposition.
 - **▧** ouvre la galerie de la caméra : liste des 200 derniers clips avec miniatures, puis téléchargement du clip touché par la même connexion directe et chiffrée, et lecture sur le téléphone spectateur. Les clips téléchargés sont gardés en cache (300 Mo au plus) et ne sont pas retéléchargés. Un clip SD pèse environ 10 à 20 Mo par minute : en 4G, le téléchargement consomme le forfait du spectateur et l’envoi montant de la box.
 
 Comme le direct, la galerie à distance n’est accessible que pendant la surveillance (c’est le service de surveillance qui répond), et la caméra doit être en version 1.7.0 ou plus.
 
 ### Alertes de mouvement sur le téléphone spectateur
 
-Sur le téléphone spectateur, les notifications sont proposées dès l’appairage ; ensuite, le bouton **🔔 Notifications de mouvement** sous chaque caméra (⚙ › Regarder une caméra) les active ou les coupe. Android demande l’autorisation d’afficher des notifications. Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
+Sur le téléphone spectateur, les notifications sont proposées dès l’appairage ; ensuite, le bouton **🔔 Notifications de mouvement** sous chaque caméra (Réglages › Regarder une caméra) les active ou les coupe. Android demande l’autorisation d’afficher des notifications. Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
 
 - une notification « Mouvement détecté · *caméra* » au début de chaque clip ; la toucher ouvre le direct ;
 - une notification si la caméra reste injoignable plus de 3 minutes (surveillance arrêtée, Wi-Fi ou box coupés…).
@@ -97,6 +97,8 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `MainActivity.kt` | HUD caméra, permissions, aperçu, réglages, état de surveillance et démarrage/arrêt du service. |
 | `MonitorService.kt` | Service de premier plan, session CameraX, détections audio/vidéo, enregistrement MediaStore et notifications. |
 | `GalleryActivity.kt` | Liste des vidéos, miniatures, sélection, suppression confirmée et lecteur intégré. |
+| `LynxUi.kt` | Système visuel commun : couleurs, typographie, boutons, cartes, pastilles d’état, feuille de menu. |
+| `app/src/main/res/drawable/ic_*.xml` | Jeu d’icônes vectorielles de l’interface (même trait que l’icône caméra). |
 | `ImmersiveMode.kt` | Masquage temporaire des barres de navigation et d’état dans les écrans principaux. |
 | `LiveProtocol.kt` | Protocole du direct (échange de nonces, canal AES-GCM, code d’appairage). Pur JVM, testé. |
 | `LiveServer.kt` | Serveur TCP du direct dans le téléphone caméra ; une file « dernière image » par spectateur. |
@@ -177,11 +179,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.7.0
-git push origin v1.7.0
+git tag v1.8.0
+git push origin v1.8.0
 ```
 
-Remplacer `1.7.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.8.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
