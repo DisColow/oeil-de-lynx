@@ -53,7 +53,7 @@ class ScanActivity : ComponentActivity() {
         previewView = PreviewView(this).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
         root.addView(previewView, FrameLayout.LayoutParams(-1, -1))
         root.addView(TextView(this).apply {
-            text = "Vise le QR code affiché sur le téléphone caméra\n(Menu ⚙ › Appairer un téléphone spectateur)"
+            text = "Vise le QR code affiché sur le téléphone caméra\n(Réglages › Appairer un téléphone spectateur)"
             gravity = Gravity.CENTER; textSize = 15f; setTextColor(Color.WHITE)
             val pad = LynxUi.dp(this@ScanActivity, 16); setPadding(pad, pad, pad, pad)
             background = LynxUi.rounded(this@ScanActivity, 0xcc101713.toInt())

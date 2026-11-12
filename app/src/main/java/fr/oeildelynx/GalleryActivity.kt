@@ -42,13 +42,13 @@ class GalleryActivity : Activity() {
     private val selected = linkedSetOf<String>()
     private lateinit var root: LinearLayout
     private lateinit var list: ListView
-    private lateinit var deleteButton: TextView
+    private lateinit var deleteButton: View
     private lateinit var selectionCount: TextView
     private var player: VideoView? = null
     private var playerController: MediaController? = null
     private var listAdapter: BaseAdapter? = null
-    private val background = Color.rgb(15, 20, 17)
-    private val card = Color.rgb(27, 35, 30)
+    private val background = LynxUi.BACKGROUND
+    private val card = LynxUi.CARD
     private val accent = Color.rgb(140, 210, 162)
     private val thumbnailLoader = Executors.newSingleThreadExecutor()
     private val thumbnails = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
@@ -78,41 +78,32 @@ class GalleryActivity : Activity() {
 
     private fun buildGallery() {
         root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(this@GalleryActivity.background) }
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(24), dp(16), dp(14)); setBackgroundColor(this@GalleryActivity.background)
+        selectionCount = TextView(this).apply {
+            textSize = 12f; setTextColor(LynxUi.ON_ACCENT); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; visibility = View.GONE
+            setPadding(dp(12), dp(6), dp(12), dp(6)); background = LynxUi.rounded(this@GalleryActivity, LynxUi.ACCENT, 14)
         }
-        val back = TextView(this).apply {
-            text = "‹"; textSize = 36f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-            setOnClickListener { finish() }
-        }
-        header.addView(back, LinearLayout.LayoutParams(dp(40), dp(48)))
-        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
-        heading.addView(TextView(this).apply { text = "Galerie"; textSize = 23f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
-        heading.addView(TextView(this).apply { text = "CLIPS DE SURVEILLANCE"; textSize = 10f; letterSpacing = .14f; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(3), 0, 0) })
-        header.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
-        selectionCount = TextView(this).apply { textSize = 12f; setTextColor(accent); gravity = Gravity.CENTER; visibility = View.GONE }
-        header.addView(selectionCount)
-        root.addView(header)
+        root.addView(LynxUi.header(this, "Galerie", "Clips de surveillance", selectionCount) { finish() })
 
         list = ListView(this).apply {
-            divider = null; dividerHeight = dp(9); setPadding(dp(12), dp(3), dp(12), dp(12)); clipToPadding = false
+            divider = null; dividerHeight = dp(10); setPadding(dp(16), dp(2), dp(16), dp(16)); clipToPadding = false
+            selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
         }
-        val empty = TextView(this).apply {
-            text = "Aucune capture pour l’instant\n\nLes vidéos détectées apparaîtront ici."
-            gravity = Gravity.CENTER; textSize = 15f; setTextColor(0xffaab5ae.toInt())
+        val empty = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(32), 0, dp(32), dp(60))
+            addView(ImageView(this@GalleryActivity).apply {
+                setImageResource(R.drawable.ic_gallery); imageTintList = android.content.res.ColorStateList.valueOf(LynxUi.ACCENT)
+                val pad = dp(22); setPadding(pad, pad, pad, pad); background = LynxUi.circle(0xff17261d.toInt())
+            }, LinearLayout.LayoutParams(dp(80), dp(80)))
+            addView(LynxUi.title(this@GalleryActivity, "Aucun clip pour l’instant", 19f).apply { gravity = Gravity.CENTER; setPadding(0, dp(16), 0, dp(6)) })
+            addView(LynxUi.body(this@GalleryActivity, "Les vidéos enregistrées lors d’un mouvement apparaîtront ici.").apply { gravity = Gravity.CENTER })
         }
         (list.parent as? ViewGroup)?.removeView(list)
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(empty, LinearLayout.LayoutParams(-1, 0, 1f))
         list.emptyView = empty
 
-        deleteButton = TextView(this).apply {
-            text = "Supprimer la sélection"; textSize = 14f; gravity = Gravity.CENTER
-            setTextColor(Color.WHITE); setPadding(dp(16), dp(13), dp(16), dp(13)); background = rounded(0xff9e3939.toInt(), dp(14)); visibility = View.GONE
-            setOnClickListener { confirmDelete() }
-        }
-        root.addView(deleteButton, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(6), dp(16), dp(14)) })
+        deleteButton = LynxUi.button(this, "Supprimer la sélection", LynxUi.DANGER, R.drawable.ic_trash) { confirmDelete() }.apply { visibility = View.GONE }
+        root.addView(deleteButton, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(6), dp(16), dp(20)) })
         setContentView(root)
         listAdapter = createAdapter()
         list.adapter = listAdapter
@@ -172,28 +163,50 @@ class GalleryActivity : Activity() {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val capture = captures[position]
             val key = capture.name
+            val isSelected = selected.contains(key)
             val row = LinearLayout(this@GalleryActivity).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(10), dp(12), dp(10))
-                background = rounded(if (selected.contains(key)) 0xff304b39.toInt() else card, dp(16))
+                setPadding(dp(10), dp(10), dp(14), dp(10))
+                background = if (isSelected) LynxUi.outlined(this@GalleryActivity, 0xff1d3326.toInt(), LynxUi.ACCENT, 20)
+                    else LynxUi.rounded(this@GalleryActivity, LynxUi.CARD, 20)
+            }
+            // Miniature aux coins arrondis, avec un badge lecture (ou coche en sélection).
+            val frame = FrameLayout(this@GalleryActivity).apply {
+                background = LynxUi.rounded(this@GalleryActivity, 0xff222a25.toInt(), 14); clipToOutline = true
             }
             val thumb = ImageView(this@GalleryActivity).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff222a25.toInt()); tag = key
+                scaleType = ImageView.ScaleType.CENTER_CROP; tag = key
             }
             bindThumbnail(thumb, capture)
-            row.addView(thumb, LinearLayout.LayoutParams(dp(102), dp(76)))
+            frame.addView(thumb, FrameLayout.LayoutParams(-1, -1))
+            frame.addView(ImageView(this@GalleryActivity).apply {
+                setImageResource(if (isSelected) R.drawable.ic_check else R.drawable.ic_play)
+                imageTintList = android.content.res.ColorStateList.valueOf(if (isSelected) LynxUi.ON_ACCENT else Color.WHITE)
+                val pad = dp(7); setPadding(pad, pad, pad, pad)
+                background = LynxUi.circle(if (isSelected) LynxUi.ACCENT else 0x99000000.toInt())
+            }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+            row.addView(frame, LinearLayout.LayoutParams(dp(112), dp(80)))
 
-            val details = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0) }
-            val formatter = SimpleDateFormat("dd/MM/yyyy · HH:mm:ss", Locale.getDefault())
+            val details = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+            val day = SimpleDateFormat("EEE d MMM", Locale.FRANCE)
+            val time = SimpleDateFormat("HH:mm:ss", Locale.FRANCE)
             details.addView(TextView(this@GalleryActivity).apply {
-                text = "Début  ${formatter.format(Date(capture.startMs))}"; textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+                text = day.format(Date(capture.startMs)).replaceFirstChar { it.titlecase(Locale.FRANCE) }
+                textSize = 15f; setTextColor(LynxUi.TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             })
             details.addView(TextView(this@GalleryActivity).apply {
-                text = "Fin      ${formatter.format(Date(capture.startMs + capture.durationMs))}"; textSize = 12f; setTextColor(0xffaab5ae.toInt()); setPadding(0, dp(7), 0, 0)
+                text = "${time.format(Date(capture.startMs))} → ${time.format(Date(capture.startMs + capture.durationMs))}"
+                textSize = 13f; setTextColor(LynxUi.MUTED); setPadding(0, dp(3), 0, 0)
             })
-            details.addView(TextView(this@GalleryActivity).apply {
-                text = "VIDÉO  ·  ${formatDuration(capture.durationMs)}"; textSize = 10f; letterSpacing = .1f; setTextColor(accent); setPadding(0, dp(7), 0, 0)
-            })
+            details.addView(LinearLayout(this@GalleryActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(3), dp(10), dp(3))
+                background = LynxUi.rounded(this@GalleryActivity, 0xff1f3328.toInt(), 10)
+                addView(LynxUi.icon(this@GalleryActivity, R.drawable.ic_timer, LynxUi.ACCENT, 13))
+                addView(TextView(this@GalleryActivity).apply {
+                    text = formatDuration(capture.durationMs); textSize = 11.5f; setTextColor(LynxUi.ACCENT); setPadding(dp(5), 0, 0, 0)
+                    typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                })
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
             row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
             row.setOnClickListener {
                 if (selected.isNotEmpty()) toggleSelection(capture)
@@ -262,14 +275,7 @@ class GalleryActivity : Activity() {
     private fun play(capture: Capture) {
         player?.stopPlayback(); playerController?.hide()
         root.removeAllViews()
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(20), dp(16), dp(12)) }
-        header.addView(TextView(this).apply {
-            text = "‹"; textSize = 36f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setOnClickListener { showList() }
-        }, LinearLayout.LayoutParams(dp(42), dp(48)))
-        header.addView(TextView(this).apply {
-            text = "LECTURE"; textSize = 13f; letterSpacing = .12f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); setPadding(dp(8), 0, 0, 0)
-        })
-        root.addView(header)
+        root.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(capture.startMs))) { showList() })
 
         // Pas de fond sur la VideoView elle-même : il serait dessiné par-dessus l’image de la vidéo.
         val video = VideoView(this)
