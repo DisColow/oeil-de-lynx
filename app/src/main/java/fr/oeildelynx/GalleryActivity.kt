@@ -44,8 +44,7 @@ class GalleryActivity : Activity() {
     private lateinit var list: ListView
     private lateinit var deleteButton: View
     private lateinit var selectionCount: TextView
-    private var player: VideoView? = null
-    private var playerController: MediaController? = null
+    private var player: ClipPlayer? = null
     private var listAdapter: BaseAdapter? = null
     private val background = LynxUi.BACKGROUND
     private val card = LynxUi.CARD
@@ -273,31 +272,28 @@ class GalleryActivity : Activity() {
     }
 
     private fun play(capture: Capture) {
-        player?.stopPlayback(); playerController?.hide()
+        player?.release()
         root.removeAllViews()
-        root.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(capture.startMs))) { showList() })
-
-        // Pas de fond sur la VideoView elle-même : il serait dessiné par-dessus l’image de la vidéo.
-        val video = VideoView(this)
+        val video = ClipPlayer(this).apply {
+            setBackgroundColor(Color.BLACK)
+            onError = { Toast.makeText(this@GalleryActivity, "Impossible de lire cette vidéo.", Toast.LENGTH_SHORT).show() }
+        }
         player = video
-        val stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        stage.addView(video, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        root.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(capture.startMs)),
+            LynxUi.iconButton(this, R.drawable.ic_rotate, "Pivoter la vidéo", 0x66223029) { video.rotateQuarter() }) { showList() })
+        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo.
+        root.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
         val info = TextView(this).apply {
             val formatter = SimpleDateFormat("EEEE d MMMM yyyy · HH:mm:ss", Locale.getDefault())
             text = "Début de la capture\n${formatter.format(Date(capture.startMs))}"
             textSize = 13f; setTextColor(0xffd1dad4.toInt()); gravity = Gravity.CENTER; setPadding(dp(16), dp(18), dp(16), dp(22))
         }
         root.addView(info)
-        val controller = MediaController(this)
-        controller.setAnchorView(video); video.setMediaController(controller); playerController = controller
-        video.setVideoURI(capture.uri)
-        video.setOnPreparedListener { it.isLooping = false; video.start(); controller.show(3000) }
-        video.setOnErrorListener { _, _, _ -> Toast.makeText(this, "Impossible de lire cette vidéo.", Toast.LENGTH_SHORT).show(); true }
+        video.play(capture.uri)
     }
 
     private fun showList() {
-        player?.stopPlayback(); player = null; playerController = null
+        player?.release(); player = null
         root.removeAllViews(); setContentView(root)
         buildGallery()
         reloadCaptures()
@@ -323,7 +319,7 @@ class GalleryActivity : Activity() {
         if (player != null) showList() else super.onBackPressed()
     }
 
-    override fun onDestroy() { player?.stopPlayback(); thumbnailLoader.shutdownNow(); super.onDestroy() }
+    override fun onDestroy() { player?.release(); thumbnailLoader.shutdownNow(); super.onDestroy() }
 
     companion object { const val EXTRA_FOCUS_NAME = "focus_capture_name" }
 }
