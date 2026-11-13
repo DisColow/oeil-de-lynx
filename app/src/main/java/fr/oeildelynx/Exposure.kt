@@ -1,7 +1,11 @@
 package fr.oeildelynx
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.camera.core.Camera
+import androidx.core.content.ContextCompat
 import java.util.Locale
 
 /**
@@ -14,6 +18,10 @@ internal object Exposure {
     private const val PREF_MIN = "exposure_min"
     private const val PREF_MAX = "exposure_max"
     private const val PREF_STEP = "exposure_step"
+    private const val TAG = "LynxExposure"
+    private const val MAX_ATTEMPTS = 20
+    private const val RETRY_DELAY_MS = 300L
+    private val handler = Handler(Looper.getMainLooper())
 
     class Range(val min: Int, val max: Int, val step: Float, val index: Int) {
         val supported get() = max > min
@@ -25,8 +33,11 @@ internal object Exposure {
         Range(it.getInt(PREF_MIN, 0), it.getInt(PREF_MAX, 0), it.getFloat(PREF_STEP, 0f), it.getInt(PREF_INDEX, 0))
     }
 
-    /** Mémorise la plage de cette caméra et lui applique la correction choisie (bornée). */
-    fun apply(context: Context, camera: Camera) {
+    /**
+     * Mémorise la plage de cette caméra et lui applique la correction choisie (bornée).
+     * [onApplied] reçoit l’index réellement appliqué par la caméra.
+     */
+    fun apply(context: Context, camera: Camera, onApplied: (Int) -> Unit = {}) {
         val state = camera.cameraInfo.exposureState
         if (!state.isExposureCompensationSupported) {
             prefs(context).edit().putInt(PREF_MIN, 0).putInt(PREF_MAX, 0).apply(); return
@@ -35,7 +46,27 @@ internal object Exposure {
         val index = prefs(context).getInt(PREF_INDEX, 0).coerceIn(bounds.lower, bounds.upper)
         prefs(context).edit().putInt(PREF_MIN, bounds.lower).putInt(PREF_MAX, bounds.upper)
             .putFloat(PREF_STEP, state.exposureCompensationStep.toFloat()).apply()
-        camera.cameraControl.setExposureCompensationIndex(index)
+        push(context.applicationContext, camera, index, MAX_ATTEMPTS, onApplied)
+    }
+
+    /**
+     * CameraX refuse le réglage tant que la caméra n’est pas complètement ouverte (juste après la
+     * liaison, au démarrage de la surveillance ou au changement de caméra). On réessaie donc jusqu’à
+     * ce qu’elle l’accepte, sauf si l’utilisateur a choisi entre-temps une autre valeur.
+     */
+    private fun push(context: Context, camera: Camera, index: Int, attemptsLeft: Int, onApplied: (Int) -> Unit) {
+        val future = camera.cameraControl.setExposureCompensationIndex(index)
+        future.addListener({
+            val applied = try { future.get(); true } catch (error: Exception) {
+                Log.w(TAG, "Exposure $index not applied yet (${error.javaClass.simpleName}), ${attemptsLeft} attempt(s) left")
+                false
+            }
+            if (applied) {
+                onApplied(camera.cameraInfo.exposureState.exposureCompensationIndex)
+            } else if (attemptsLeft > 0 && prefs(context).getInt(PREF_INDEX, 0) == index) {
+                handler.postDelayed({ push(context, camera, index, attemptsLeft - 1, onApplied) }, RETRY_DELAY_MS)
+            }
+        }, ContextCompat.getMainExecutor(context))
     }
 
     fun setIndex(context: Context, index: Int) {
