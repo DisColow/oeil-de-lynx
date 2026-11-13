@@ -169,7 +169,7 @@ class MonitorService : LifecycleService() {
             provider.unbindAll()
             val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             boundCamera = provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
-                .also { Exposure.apply(this, it) }
+                .also { Exposure.apply(this, it) { publishLiveStatus() } }
             Log.i(TAG, "CameraX bound to ${if (useFrontCamera) "front" else "back"} camera")
             true
         } catch (error: Exception) {
@@ -474,7 +474,8 @@ class MonitorService : LifecycleService() {
     /** Correction d’exposition demandée par le HUD ou par un spectateur (thread principal). */
     private fun setExposure(index: Int) {
         Exposure.setIndex(this, index)
-        boundCamera?.let { Exposure.apply(this, it) }
+        // L’état est republié une fois la valeur acceptée par la caméra : le spectateur voit la valeur réelle.
+        boundCamera?.let { Exposure.apply(this, it) { publishLiveStatus() } }
         publishLiveStatus()
     }
 
