@@ -404,7 +404,7 @@ class MainActivity : ComponentActivity() {
                 val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
                 toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
             },
-            LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes") { showRules() },
+            LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", "${durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes"} · découpe les mouvements très longs") { showRules() },
             LynxUi.SheetItem(R.drawable.ic_qr, "Appairer un téléphone spectateur", "QR code pour le direct et les alertes") { startActivity(Intent(this, PairingActivity::class.java)) },
             LynxUi.SheetItem(R.drawable.ic_eye, "Regarder une caméra", "Ce téléphone devient spectateur") { startActivity(Intent(this, ViewerActivity::class.java)) }
         )
@@ -467,8 +467,28 @@ class MainActivity : ComponentActivity() {
         val durations = intArrayOf(30_000, 90_000, 180_000, 300_000, 600_000)
         val labels = arrayOf("30 secondes", "1 minute 30", "3 minutes", "5 minutes", "10 minutes")
         val selected = durations.indexOf(prefs.getInt("max_clip_ms", 600_000)).coerceAtLeast(0)
-        AlertDialog.Builder(this).setTitle("Règles · Durée maximale")
-            .setSingleChoiceItems(labels, selected) { dialog, which -> prefs.edit().putInt("max_clip_ms", durations[which]).apply(); dialog.dismiss() }
+        // Explication au-dessus des choix : un message d’AlertDialog masquerait la liste, d’où une vue dédiée.
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(24), 0) }
+        content.addView(LynxUi.body(this,
+            "Un clip s’arrête normalement 10 secondes après la fin du mouvement. Cette durée maximale ne sert que " +
+                "si le mouvement ne s’arrête pas (passage prolongé, rideau ou arbre qui bouge, lumière qui clignote) : " +
+                "le clip est alors coupé à cette durée, et un nouveau clip démarre aussitôt si le mouvement continue. " +
+                "Rien n’est perdu, la vidéo est simplement découpée en plusieurs fichiers.", 13.5f, LynxUi.TEXT))
+        content.addView(LynxUi.body(this,
+            "Plus court : fichiers plus légers, plus faciles à consulter et à télécharger depuis le téléphone spectateur. " +
+                "Plus long : moins de fichiers lors d’une longue activité. Un clip pèse environ 10 à 20 Mo par minute.", 12.5f)
+            .apply { setPadding(0, dp(10), 0, dp(6)) })
+        val group = RadioGroup(this)
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        labels.forEachIndexed { index, label ->
+            group.addView(androidx.appcompat.widget.AppCompatRadioButton(this).apply {
+                id = View.generateViewId(); text = label; textSize = 15f; setTextColor(LynxUi.TEXT)
+                isChecked = index == selected; setPadding(dp(8), dp(10), 0, dp(10))
+                setOnClickListener { prefs.edit().putInt("max_clip_ms", durations[index]).apply(); dialog.dismiss() }
+            })
+        }
+        content.addView(group)
+        dialog = AlertDialog.Builder(this).setTitle("Durée maximale des clips").setView(ScrollView(this).apply { addView(content) })
             .setNegativeButton("Fermer", null).show()
     }
 
