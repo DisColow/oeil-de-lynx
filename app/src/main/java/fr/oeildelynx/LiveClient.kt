@@ -140,13 +140,14 @@ internal class LiveClient(
         }
 
         /** Télécharge un clip morceau par morceau ; [onProgress] reçoit le nombre d’octets reçus. */
-        @Synchronized fun download(id: String, output: java.io.OutputStream, onProgress: (Long) -> Unit) {
+        @Synchronized fun download(id: String, output: java.io.OutputStream, onSize: (Long) -> Unit = {}, onProgress: (Long) -> Unit) {
             channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(mapOf("op" to "file", "id" to id)).toByteArray(Charsets.UTF_8))
             var received = 0L
             while (true) {
                 val record = channel.receive()
                 when (record.type) {
                     LiveProtocol.TYPE_CHUNK -> { output.write(record.payload); received += record.payload.size; onProgress(received) }
+                    LiveProtocol.TYPE_FILE_SIZE -> String(record.payload, Charsets.UTF_8).toLongOrNull()?.takeIf { it > 0 }?.let(onSize)
                     LiveProtocol.TYPE_END -> return
                     LiveProtocol.TYPE_ERROR -> throw IOException(String(record.payload, Charsets.UTF_8))
                 }

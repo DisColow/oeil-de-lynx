@@ -128,7 +128,8 @@ class LiveProtocolTest {
                     val channel = LiveProtocol.serverHandshake(socket.getInputStream(), socket.getOutputStream(), key)
                     val request = LiveProtocol.decodeFields(String(channel.receive().payload))
                     assertEquals("file", request["op"]); assertEquals("42", request["id"])
-                    clip.toList().chunked(256 * 1024).forEach { channel.send(LiveProtocol.TYPE_CHUNK, it.toByteArray()) }
+                    channel.send(LiveProtocol.TYPE_FILE_SIZE, clip.size.toString().toByteArray())
+                    clip.toList().chunked(64 * 1024).forEach { channel.send(LiveProtocol.TYPE_CHUNK, it.toByteArray()) }
                     channel.send(LiveProtocol.TYPE_END)
                 }
             }
@@ -137,7 +138,12 @@ class LiveProtocolTest {
                 val channel = LiveProtocol.clientHandshake(socket.getInputStream(), socket.getOutputStream(), key)
                 val output = ByteArrayOutputStream()
                 var progress = 0L
-                LiveClient.GallerySession(socket, channel).download("42", output) { progress = it }
+                var announced = 0L
+                val steps = mutableListOf<Long>()
+                LiveClient.GallerySession(socket, channel).download("42", output, onSize = { announced = it }) { progress = it; steps += it }
+                assertEquals(clip.size.toLong(), announced)
+                // 600 000 octets en morceaux de 64 ko : 10 étapes de progression, pas une seule à la fin.
+                assertEquals(10, steps.size)
                 assertArrayEquals(clip, output.toByteArray())
                 assertEquals(clip.size.toLong(), progress)
             }

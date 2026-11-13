@@ -7,7 +7,9 @@ import java.util.Locale
  * (3 s par défaut) : assez réactive pour suivre la 4G, assez lissée pour ne pas sauter à chaque morceau.
  * Pur JVM pour être testé.
  */
-internal class TransferStats(private val total: Long, startMs: Long, private val windowMs: Long = 3_000) {
+internal class TransferStats(total: Long, startMs: Long, private val windowMs: Long = 3_000) {
+    /** Taille totale ; la caméra peut l’annoncer au début du transfert si la liste l’ignorait. */
+    var total = total
     private val samples = ArrayDeque<Pair<Long, Long>>().apply { addLast(startMs to 0L) }
     var received = 0L
         private set
