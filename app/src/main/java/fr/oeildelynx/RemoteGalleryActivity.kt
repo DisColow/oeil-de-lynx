@@ -130,23 +130,60 @@ class RemoteGalleryActivity : ComponentActivity() {
     private fun download(clip: Clip) {
         val file = File(File(cacheDir, "remote").apply { mkdirs() }, "${cameraId.take(8)}_${clip.id}.mp4")
         if (file.exists() && file.length() == clip.size && clip.size > 0) { play(file, clip); return }
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
-        val label = LynxUi.body(this, "Téléchargement…", 14f, Color.WHITE)
-        val overlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(32), 0, dp(32), 0)
-            setBackgroundColor(0xdd0f1411.toInt()); isClickable = true
-            addView(label); addView(progress, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        // Panneau de progression : pourcentage, quantité reçue, vitesse et temps restant estimé.
+        val percent = LynxUi.title(this, "0 %", 34f).apply { gravity = Gravity.CENTER }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000; progressTintList = android.content.res.ColorStateList.valueOf(LynxUi.ACCENT)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(LynxUi.OUTLINE)
+        }
+        val amount = LynxUi.body(this, "0 ko sur ${TransferStats.formatSize(clip.size)}", 14f, LynxUi.TEXT)
+        val speed = LynxUi.body(this, "Mesure de la vitesse…", 14f, LynxUi.TEXT)
+        val remaining = LynxUi.body(this, "Temps restant : calcul…", 14f, LynxUi.MUTED)
+        var cancelled = false
+        val card = LynxUi.card(this, 22).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(LynxUi.overline(this@RemoteGalleryActivity, "Téléchargement du clip", LynxUi.MUTED).apply { gravity = Gravity.CENTER })
+            addView(LynxUi.body(this@RemoteGalleryActivity, SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start)), 13f)
+                .apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(10)) })
+            addView(percent)
+            addView(progress, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(12); bottomMargin = dp(16) })
+            addView(statLine(R.drawable.ic_gallery, amount))
+            addView(statLine(R.drawable.ic_wifi, speed))
+            addView(statLine(R.drawable.ic_timer, remaining))
+            addView(LynxUi.button(this@RemoteGalleryActivity, "Annuler", LynxUi.CARD_HIGH) {
+                cancelled = true
+                // Fermer la connexion interrompt le transfert en cours ; le fichier partiel est supprimé.
+                val current = session
+                Thread { current?.close() }.start()
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+        }
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(0xe60b110e.toInt()); isClickable = true
+            addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { leftMargin = dp(20); rightMargin = dp(20) })
         }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         worker.execute {
             val partial = File(file.path + ".part")
+            val stats = TransferStats(clip.size, android.os.SystemClock.elapsedRealtime())
+            var lastUi = 0L
             try {
                 val gallery = session ?: LiveClient(applicationContext, cameraId, NO_LISTENER).openGallery().also { session = it }
+                if (cancelled) throw java.io.IOException("annulé")
                 partial.outputStream().buffered().use { output ->
                     gallery.download(clip.id, output) { received ->
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        stats.update(now, received)
+                        // Quatre rafraîchissements par seconde au plus.
+                        if (now - lastUi < 250 && received < clip.size) return@download
+                        lastUi = now
+                        val fraction = stats.fraction
+                        val rate = stats.bytesPerSecond
+                        val left = stats.remainingSeconds
                         runOnUiThread {
-                            label.text = "Téléchargement… ${formatSize(received)} / ${formatSize(clip.size)}"
-                            if (clip.size > 0) progress.progress = (received * 1000 / clip.size).toInt()
+                            if (fraction != null) { percent.text = "${(fraction * 100).toInt()} %"; progress.progress = (fraction * 1000).toInt() }
+                            amount.text = "${TransferStats.formatSize(received)} sur ${TransferStats.formatSize(clip.size)}"
+                            if (rate != null) speed.text = TransferStats.formatSpeed(rate)
+                            if (left != null) remaining.text = TransferStats.formatRemaining(left)
                         }
                     }
                 }
@@ -157,10 +194,17 @@ class RemoteGalleryActivity : ComponentActivity() {
                 partial.delete(); session?.close(); session = null
                 runOnUiThread {
                     root.removeView(overlay)
-                    if (!isDestroyed) status.text = "Téléchargement interrompu : ${error.message ?: "erreur réseau"}"
+                    if (!isDestroyed) status.text = if (cancelled) "Téléchargement annulé." else "Téléchargement interrompu : ${error.message ?: "erreur réseau"}"
                 }
             }
         }
+    }
+
+    /** Ligne de statistique du téléchargement : icône + valeur. */
+    private fun statLine(@androidx.annotation.DrawableRes icon: Int, value: TextView) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(5), 0, dp(5))
+        addView(LynxUi.icon(this@RemoteGalleryActivity, icon, LynxUi.ACCENT, 18))
+        addView(value, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
     }
 
     private fun play(file: File, clip: Clip) {
