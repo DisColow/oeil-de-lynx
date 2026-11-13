@@ -31,6 +31,12 @@ class RemoteGalleryActivity : ComponentActivity() {
     private class Clip(val id: String, val name: String, val start: Long, val duration: Long, val size: Long)
 
     private val worker = Executors.newSingleThreadExecutor()
+    @Volatile private var downloadRequested = false
+    @Volatile private var pendingThumbs: List<Pair<Clip, ImageView>> = emptyList()
+    // Miniatures déjà reçues (≤ 16 Mo), pour ne pas les redemander après un téléchargement.
+    private val thumbCache = object : android.util.LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
     private var session: LiveClient.GallerySession? = null
     private lateinit var cameraId: String
     private lateinit var root: FrameLayout
@@ -82,18 +88,34 @@ class RemoteGalleryActivity : ComponentActivity() {
                         fields["dur"]?.toLongOrNull() ?: 0L, fields["size"]?.toLongOrNull() ?: 0L)
                 }
                 val thumbs = runOnUiThreadAndGet { showClips(clips) }
-                for ((clip, view) in clips.zip(thumbs)) {
-                    val reply = gallery.request(mapOf("op" to "thumb", "id" to clip.id))
-                    val bitmap = if (reply.type == LiveProtocol.TYPE_THUMB && reply.payload.isNotEmpty())
-                        BitmapFactory.decodeByteArray(reply.payload, 0, reply.payload.size) else null
-                    if (bitmap != null) runOnUiThread { if (!isDestroyed) view.setImageBitmap(bitmap) }
-                }
+                pendingThumbs = clips.zip(thumbs)
+                fetchThumbnails()
             } catch (error: Exception) {
                 session?.close(); session = null
                 runOnUiThread {
                     if (!isDestroyed) status.text = "Caméra injoignable : ${error.message ?: "erreur réseau"}\n" +
                         "La galerie n’est accessible que pendant la surveillance, comme le direct."
                 }
+            }
+        }
+    }
+
+    /**
+     * Miniatures une à une, sur la même connexion que les téléchargements. Un téléchargement demandé
+     * passe devant : la boucle s’arrête aussitôt et reprend après lui (les miniatures reçues sont gardées).
+     */
+    private fun fetchThumbnails() {
+        val gallery = session ?: return
+        for ((clip, view) in pendingThumbs) {
+            if (downloadRequested || isDestroyed) return
+            val cached = thumbCache.get(clip.id)
+            if (cached != null) { runOnUiThread { view.setImageBitmap(cached) }; continue }
+            val reply = try { gallery.request(mapOf("op" to "thumb", "id" to clip.id)) } catch (_: Exception) { return }
+            val bitmap = if (reply.type == LiveProtocol.TYPE_THUMB && reply.payload.isNotEmpty())
+                BitmapFactory.decodeByteArray(reply.payload, 0, reply.payload.size, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }) else null
+            if (bitmap != null) {
+                thumbCache.put(clip.id, bitmap)
+                runOnUiThread { if (!isDestroyed) view.setImageBitmap(bitmap) }
             }
         }
     }
@@ -137,7 +159,7 @@ class RemoteGalleryActivity : ComponentActivity() {
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(LynxUi.OUTLINE)
         }
         val amount = LynxUi.body(this, "0 ko sur ${TransferStats.formatSize(clip.size)}", 14f, LynxUi.TEXT)
-        val speed = LynxUi.body(this, "Mesure de la vitesse…", 14f, LynxUi.TEXT)
+        val speed = LynxUi.body(this, "Connexion à la caméra…", 14f, LynxUi.TEXT)
         val remaining = LynxUi.body(this, "Temps restant : calcul…", 14f, LynxUi.MUTED)
         var cancelled = false
         val card = LynxUi.card(this, 22).apply {
@@ -162,6 +184,8 @@ class RemoteGalleryActivity : ComponentActivity() {
             addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { leftMargin = dp(20); rightMargin = dp(20) })
         }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+        // Met en pause le chargement des miniatures pour que le transfert démarre tout de suite.
+        downloadRequested = true
         worker.execute {
             val partial = File(file.path + ".part")
             val stats = TransferStats(clip.size, android.os.SystemClock.elapsedRealtime())
@@ -169,6 +193,7 @@ class RemoteGalleryActivity : ComponentActivity() {
             try {
                 val gallery = session ?: LiveClient(applicationContext, cameraId, NO_LISTENER).openGallery().also { session = it }
                 if (cancelled) throw java.io.IOException("annulé")
+                runOnUiThread { speed.text = "Démarrage du transfert…" }
                 partial.outputStream().buffered().use { output ->
                     gallery.download(clip.id, output) { received ->
                         val now = android.os.SystemClock.elapsedRealtime()
@@ -189,9 +214,11 @@ class RemoteGalleryActivity : ComponentActivity() {
                 }
                 partial.renameTo(file)
                 trimCache()
+                downloadRequested = false
                 runOnUiThread { root.removeView(overlay); if (!isDestroyed) play(file, clip) }
             } catch (error: Exception) {
                 partial.delete(); session?.close(); session = null
+                downloadRequested = false
                 runOnUiThread {
                     root.removeView(overlay)
                     if (!isDestroyed) status.text = if (cancelled) "Téléchargement annulé." else "Téléchargement interrompu : ${error.message ?: "erreur réseau"}"
