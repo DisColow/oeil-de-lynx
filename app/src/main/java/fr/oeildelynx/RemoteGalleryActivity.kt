@@ -11,11 +11,9 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.MediaController
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import java.io.File
@@ -38,7 +36,7 @@ class RemoteGalleryActivity : ComponentActivity() {
     private lateinit var root: FrameLayout
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
-    private var player: VideoView? = null
+    private var player: ClipPlayer? = null
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy · HH:mm:ss", Locale.getDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,22 +166,21 @@ class RemoteGalleryActivity : ComponentActivity() {
     private fun play(file: File, clip: Clip) {
         root.removeAllViews()
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK) }
-        page.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start))) { showList() })
-        // Fond noir sur le conteneur, pas sur la VideoView : il masquerait l’image.
-        val stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        val video = VideoView(this)
-        stage.addView(video, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        page.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
+        val video = ClipPlayer(this).apply {
+            setBackgroundColor(Color.BLACK)
+            onError = { status.text = "Impossible de lire cette vidéo." }
+        }
+        page.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start)),
+            LynxUi.iconButton(this, R.drawable.ic_rotate, "Pivoter la vidéo", 0x66223029) { video.rotateQuarter() }) { showList() })
+        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo.
+        page.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(page)
         player = video
-        val controller = MediaController(this).also { it.setAnchorView(video) }
-        video.setMediaController(controller)
-        video.setVideoURI(Uri.fromFile(file))
-        video.setOnPreparedListener { video.start(); controller.show(3000) }
+        video.play(Uri.fromFile(file))
     }
 
     private fun showList() {
-        player?.stopPlayback(); player = null
+        player?.release(); player = null
         buildList(ViewerStore.find(this, cameraId)?.name ?: "Caméra")
         load()
     }
@@ -212,7 +209,7 @@ class RemoteGalleryActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        player?.stopPlayback()
+        player?.release()
         session?.close()
         worker.shutdownNow()
         super.onDestroy()

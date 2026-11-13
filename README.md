@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.9.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.9.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.9.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.9.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -69,6 +69,7 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 
 - **Son** : le téléphone caméra ouvre son micro uniquement quand un spectateur écoute, et l’envoie en G.711 µ-law 16 kHz (≈ 128 kbit/s, en plus des 2 à 3 Mbit/s de l’image), chiffré comme le reste. Le bouton **Son** du direct le coupe ou le rétablit ; le choix est mémorisé par caméra. Au lancement d’un clip, le micro du direct est suspendu un instant pour laisser CameraX ouvrir la piste audio du clip, puis rouvert. *À vérifier sur chaque téléphone : certains Android peuvent rendre muet l’un des deux usages simultanés du micro ; la piste du clip reste prioritaire.*
 - **Orientation** : le service de surveillance suit la position physique du téléphone (capteur d’orientation) et l’applique à l’image du direct (immédiatement) et aux clips (au prochain clip). À plat sur une table, la dernière position reconnue est conservée.
+- **Lecture des clips** : le lecteur des deux galeries occupe tout l’écran en gardant les proportions, avec un bouton « Pivoter » pour redresser les clips enregistrés couchés par les versions antérieures à 1.9.0.
 - **Pivoter** : dans le direct, tourne l’image d’un quart de tour par appui, mémorisé par caméra, si un téléphone signale mal sa position.
 
 ### Exposition et galerie depuis le téléphone spectateur
@@ -105,6 +106,7 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `MainActivity.kt` | HUD caméra, permissions, aperçu, réglages, état de surveillance et démarrage/arrêt du service. |
 | `MonitorService.kt` | Service de premier plan, session CameraX, détections audio/vidéo, enregistrement MediaStore et notifications. |
 | `GalleryActivity.kt` | Liste des vidéos, miniatures, sélection, suppression confirmée et lecteur intégré. |
+| `ClipPlayer.kt` | Lecteur vidéo des galeries (TextureView) : plein écran proportionné et rotation par quart de tour. |
 | `DeviceOrientation.kt` | Position physique du téléphone caméra → rotation des images (direct et clips). |
 | `LynxUi.kt` | Système visuel commun : couleurs, typographie, boutons, cartes, pastilles d’état, feuille de menu. |
 | `app/src/main/res/drawable/ic_*.xml` | Jeu d’icônes vectorielles de l’interface (même trait que l’icône caméra). |
@@ -188,11 +190,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.9.0
-git push origin v1.9.0
+git tag v1.9.1
+git push origin v1.9.1
 ```
 
-Remplacer `1.9.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.9.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
