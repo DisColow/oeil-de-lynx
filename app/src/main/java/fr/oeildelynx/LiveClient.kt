@@ -67,6 +67,56 @@ internal class LiveClient(
     private val alertsOnly: Boolean = false
 ) {
     private var mode = if (alertsOnly) "alerts" else "live"
+
+    /** Rotation ajoutée par l’utilisateur (0, 90, 180, 270), si la caméra signale mal sa position. */
+    @Volatile var extraRotation = 0
+
+    /** Son du direct demandé à la caméra ; modifiable pendant la connexion. */
+    @Volatile var audioEnabled = false
+        set(value) {
+            field = value
+            if (!value) player?.flush()
+            sendRequest(mapOf("op" to "audio", "value" to if (value) "1" else "0"))
+        }
+    @Volatile private var player: AudioPlayer? = null
+
+    /**
+     * Lecture du son sur son propre thread : l’écriture dans AudioTrack bloque, elle ne doit pas
+     * retarder la réception des images. File courte : en cas de retard, les morceaux anciens sont jetés.
+     */
+    private class AudioPlayer {
+        private val queue = java.util.concurrent.LinkedBlockingDeque<ShortArray>()
+        @Volatile private var running = true
+        private val track: android.media.AudioTrack? = try {
+            val rate = LiveProtocol.AUDIO_SAMPLE_RATE
+            val min = android.media.AudioTrack.getMinBufferSize(rate, android.media.AudioFormat.CHANNEL_OUT_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
+            android.media.AudioTrack.Builder()
+                .setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAudioFormat(android.media.AudioFormat.Builder().setSampleRate(rate)
+                    .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                .setBufferSizeInBytes(maxOf(min, rate / 2))
+                .setTransferMode(android.media.AudioTrack.MODE_STREAM).build().also { it.play() }
+        } catch (_: Exception) { null }
+
+        init {
+            Thread({
+                while (running) {
+                    val chunk = try { queue.poll(500, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { break } ?: continue
+                    try { track?.write(chunk, 0, chunk.size) } catch (_: Exception) { }
+                }
+            }, "lynx-live-audio-out").start()
+        }
+
+        fun play(chunk: ShortArray) {
+            queue.offer(chunk)
+            while (queue.size > 8) queue.pollFirst() // ~0,5 s de retard au plus
+        }
+
+        fun flush() { queue.clear(); try { track?.pause(); track?.flush(); track?.play() } catch (_: Exception) { } }
+
+        fun release() { running = false; queue.clear(); try { track?.stop(); track?.release() } catch (_: Exception) { } }
+    }
     @Volatile private var activeChannel: SecureChannel? = null
 
     /** Envoie une commande à la caméra (ex. exposition) si la connexion est ouverte. */
@@ -135,6 +185,7 @@ internal class LiveClient(
     }
 
     fun stop() {
+        player?.release(); player = null
         session?.set(false)
         session = null
         try { socket?.close() } catch (_: IOException) { }
@@ -194,7 +245,7 @@ internal class LiveClient(
             when (record.type) {
                 LiveProtocol.TYPE_FRAME -> {
                     if (record.payload.size < 3) continue
-                    val rotation = ((record.payload[0].toInt() and 0xff) shl 8) or (record.payload[1].toInt() and 0xff)
+                    val rotation = ((((record.payload[0].toInt() and 0xff) shl 8) or (record.payload[1].toInt() and 0xff)) + extraRotation) % 360
                     val decoded = BitmapFactory.decodeByteArray(record.payload, 2, record.payload.size - 2) ?: continue
                     val bitmap = if (rotation % 360 == 0) decoded else
                         Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, Matrix().apply { postRotate(rotation.toFloat()) }, true)
@@ -207,6 +258,10 @@ internal class LiveClient(
                         listener.onState("En direct · $route · ${"%.1f".format(fps)} img/s", true)
                         frameCount = 0; windowStart = now
                     }
+                }
+                LiveProtocol.TYPE_AUDIO -> if (audioEnabled && flag.get()) {
+                    val out = player ?: AudioPlayer().also { player = it }
+                    out.play(MuLaw.decode(record.payload))
                 }
                 LiveProtocol.TYPE_STATUS -> listener.onStatus(LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8)))
                 LiveProtocol.TYPE_BYE -> {
@@ -273,7 +328,7 @@ internal class LiveClient(
                 BufferedInputStream(socket.getInputStream(), 64 * 1024), BufferedOutputStream(socket.getOutputStream()), camera.key
             )
             // À partir d’ici, la caméra a répondu : une fermeture immédiate signifie qu’elle refuse notre clé.
-            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode))
+            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode, "audio" to if (audioEnabled && mode == "live") "1" else "0"))
             channel.send(LiveProtocol.TYPE_AUTH, auth.toByteArray(Charsets.UTF_8))
             val hello = try { channel.receive() } catch (error: EOFException) { throw KeyRejected() } catch (error: java.net.SocketException) { throw KeyRejected() }
             if (hello.type != LiveProtocol.TYPE_HELLO) throw IOException("Réponse inattendue de la caméra")
