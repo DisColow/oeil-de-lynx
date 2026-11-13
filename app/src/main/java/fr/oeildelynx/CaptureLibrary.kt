@@ -43,7 +43,17 @@ internal class CaptureLibrary(private val context: Context) : LiveGallery {
         return clips
     }
 
-    private fun owns(id: Long) = list().any { it["id"] == id.toString() }
+    @Volatile private var knownIds: Set<String> = emptySet()
+    @Volatile private var knownAt = 0L
+
+    /** Vérifie que l’identifiant est bien un clip du dossier ; liste gardée 10 s pour éviter une requête par miniature. */
+    private fun owns(id: Long): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - knownAt > 10_000 || id.toString() !in knownIds) {
+            knownIds = list().mapNotNull { it["id"] }.toSet(); knownAt = now
+        }
+        return id.toString() in knownIds
+    }
 
     override fun thumbnail(id: Long): ByteArray? {
         thumbnails[id]?.let { return it }
