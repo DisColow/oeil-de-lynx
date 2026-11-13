@@ -35,8 +35,21 @@ internal class LiveServer(
     private val onViewersChanged: (Int) -> Unit,
     /** Commande d’un spectateur (ex. `op=exposure&value=2`), appelée hors du thread principal. */
     private val onRequest: (Map<String, String>) -> Unit = {},
-    private val gallery: LiveGallery? = null
+    private val gallery: LiveGallery? = null,
+    /** Vrai dès qu’au moins un spectateur veut le son : le micro du direct ne tourne que dans ce cas. */
+    private val onAudioDemandChanged: (Boolean) -> Unit = {}
 ) {
+    @Volatile private var audioDemand = false
+
+    fun hasAudioListeners() = viewers.any { it.wantsAudio }
+
+    /** Morceau de son µ-law à diffuser aux spectateurs qui l’écoutent. */
+    fun publishAudio(chunk: ByteArray) = viewers.forEach { if (it.wantsAudio) it.offerAudio(chunk) }
+
+    @Synchronized private fun refreshAudioDemand() {
+        val demand = hasAudioListeners()
+        if (demand != audioDemand) { audioDemand = demand; onAudioDemandChanged(demand) }
+    }
     private val gallerySockets = CopyOnWriteArrayList<Socket>()
     private var serverSocket: ServerSocket? = null
     private val viewers = CopyOnWriteArrayList<Viewer>()
@@ -134,6 +147,7 @@ internal class LiveServer(
             if (sameKind >= if (alertsOnly) MAX_ALERT_LISTENERS else MAX_VIEWERS) throw IOException("Trop de spectateurs")
             channel.send(LiveProtocol.TYPE_HELLO, LiveProtocol.encodeFields(helloProvider()).toByteArray(Charsets.UTF_8))
             viewer = Viewer(socket, channel, fields["name"].orEmpty().take(60), alertsOnly)
+            viewer.wantsAudio = !alertsOnly && fields["audio"] == "1"
         } catch (error: Exception) {
             // Mauvaise clé, scanner de ports ou connexion coupée : rien n’est envoyé en clair.
             Log.w(TAG, "Live handshake rejected from ${socket.inetAddress?.hostAddress}: ${error.message}")
@@ -146,6 +160,7 @@ internal class LiveServer(
         viewers += viewer
         Log.i(TAG, "Live viewer connected: ${viewer.name} from ${socket.inetAddress?.hostAddress}")
         onViewersChanged(viewerCount)
+        refreshAudioDemand()
         if (lastStatus.isNotEmpty()) viewer.offerStatus(LiveProtocol.encodeFields(lastStatus).toByteArray(Charsets.UTF_8))
         // Les envois sont surveillés par le chien de garde ; les lectures attendent sans limite les commandes.
         try { socket.soTimeout = 0 } catch (_: IOException) { }
@@ -155,6 +170,7 @@ internal class LiveServer(
             viewers -= viewer
             Log.i(TAG, "Live viewer disconnected: ${viewer.name}")
             onViewersChanged(viewerCount)
+            refreshAudioDemand()
         }
     }
 
@@ -165,28 +181,40 @@ internal class LiveServer(
         private var frame: ByteArray? = null
         private var status: ByteArray? = null
         private var bye = false
+        // Son : petite file (≈ 1 s) ; au-delà, les morceaux les plus anciens sont jetés pour rester en direct.
+        private val audio = ArrayDeque<ByteArray>()
+        @Volatile var wantsAudio = false
         @Volatile var sendingSince = 0L
 
         fun offerFrame(payload: ByteArray) = synchronized(lock) { frame = payload; lock.notifyAll() }
         fun offerStatus(payload: ByteArray) = synchronized(lock) { status = payload; lock.notifyAll() }
         fun goodbye() = synchronized(lock) { bye = true; lock.notifyAll() }
+        fun offerAudio(chunk: ByteArray) = synchronized(lock) {
+            audio.addLast(chunk)
+            while (audio.size > MAX_AUDIO_CHUNKS) audio.removeFirst()
+            lock.notifyAll()
+        }
 
         fun sendLoop() {
             try {
                 while (true) {
                     var nextFrame: ByteArray?; var nextStatus: ByteArray?; var sayBye: Boolean
+                    val sounds: List<ByteArray>
                     synchronized(lock) {
-                        if (frame == null && status == null && !bye) lock.wait(keepaliveMs)
+                        if (frame == null && status == null && !bye && audio.isEmpty()) lock.wait(keepaliveMs)
                         nextFrame = frame; nextStatus = status; sayBye = bye
                         frame = null; status = null
+                        sounds = audio.toList(); audio.clear()
                     }
                     if (!running && !sayBye) return
                     sendingSince = SystemClock.elapsedRealtime()
                     if (sayBye) { channel.send(LiveProtocol.TYPE_BYE); return }
                     nextStatus?.let { channel.send(LiveProtocol.TYPE_STATUS, it) }
+                    // Le son passe avant l’image : une coupure s’entend plus qu’une image sautée.
+                    sounds.forEach { channel.send(LiveProtocol.TYPE_AUDIO, it) }
                     val image = nextFrame
                     if (image != null) channel.send(LiveProtocol.TYPE_FRAME, image)
-                    else if (nextStatus == null) channel.send(LiveProtocol.TYPE_KEEPALIVE)
+                    else if (nextStatus == null && sounds.isEmpty()) channel.send(LiveProtocol.TYPE_KEEPALIVE)
                     sendingSince = 0L
                 }
             } catch (_: Exception) {
@@ -200,7 +228,15 @@ internal class LiveServer(
                 while (true) {
                     val record = channel.receive()
                     if (record.type == LiveProtocol.TYPE_REQUEST) {
-                        try { onRequest(LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))) } catch (error: Exception) { Log.w(TAG, "Live request failed", error) }
+                        val request = LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))
+                        // Son activé ou coupé par ce spectateur : géré ici, propre à sa connexion.
+                        if (request["op"] == "audio") {
+                            wantsAudio = !alertsOnly && request["value"] == "1"
+                            if (!wantsAudio) synchronized(lock) { audio.clear() }
+                            refreshAudioDemand()
+                            continue
+                        }
+                        try { onRequest(request) } catch (error: Exception) { Log.w(TAG, "Live request failed", error) }
                     }
                 }
             } catch (_: Exception) { close() }
@@ -253,6 +289,7 @@ internal class LiveServer(
         private const val MAX_VIEWERS = 3
         private const val MAX_ALERT_LISTENERS = 5
         private const val MAX_GALLERY = 2
+        private const val MAX_AUDIO_CHUNKS = 16
         private const val GALLERY_IDLE_MS = 120_000
         private const val CHUNK_BYTES = 256 * 1024
         private const val ALERT_KEEPALIVE_MS = 25_000L

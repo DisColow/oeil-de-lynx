@@ -51,6 +51,10 @@ internal object LiveProtocol {
     const val TYPE_CHUNK = 0x23     // caméra → spectateur : morceau de fichier vidéo
     const val TYPE_END = 0x24       // caméra → spectateur : fin du fichier
     const val TYPE_ERROR = 0x25     // caméra → spectateur : message d’erreur
+    // Depuis 1.9.0 : son du direct (G.711 µ-law, 16 kHz mono), envoyé aux spectateurs qui le demandent.
+    const val TYPE_AUDIO = 0x14     // caméra → spectateur : échantillons µ-law
+
+    const val AUDIO_SAMPLE_RATE = 16_000
 
     private val random = SecureRandom()
 
@@ -108,6 +112,41 @@ internal object LiveProtocol {
     fun decodeFields(text: String): Map<String, String> = text.split('&').filter { it.contains('=') }.associate { part ->
         val (key, value) = part.split('=', limit = 2)
         URLDecoder.decode(key, "UTF-8") to URLDecoder.decode(value, "UTF-8")
+    }
+}
+
+/**
+ * Codec G.711 µ-law : 8 bits par échantillon au lieu de 16, soit 128 kbit/s à 16 kHz.
+ * Sans dépendance ni latence d’encodage, et suffisant pour entendre ce qui se passe dans une pièce.
+ */
+internal object MuLaw {
+    private const val BIAS = 0x84
+    private const val CLIP = 32635
+
+    fun encode(samples: ShortArray, count: Int = samples.size): ByteArray = ByteArray(count) { encode(samples[it].toInt()) }
+
+    fun encode(sample: Int): Byte {
+        var pcm = sample
+        val sign = if (pcm < 0) 0x80 else 0
+        if (pcm < 0) pcm = -pcm
+        if (pcm > CLIP) pcm = CLIP
+        pcm += BIAS
+        var exponent = 7
+        var mask = 0x4000
+        while (exponent > 0 && pcm and mask == 0) { exponent--; mask = mask shr 1 }
+        val mantissa = (pcm shr (exponent + 3)) and 0x0f
+        return (sign or (exponent shl 4) or mantissa).inv().toByte()
+    }
+
+    fun decode(data: ByteArray): ShortArray = ShortArray(data.size) { decode(data[it]) }
+
+    fun decode(value: Byte): Short {
+        val u = value.toInt().inv() and 0xff
+        val sign = u and 0x80
+        val exponent = (u shr 4) and 0x07
+        val mantissa = u and 0x0f
+        val magnitude = (((mantissa shl 3) + BIAS) shl exponent) - BIAS
+        return (if (sign != 0) -magnitude else magnitude).toShort()
     }
 }
 

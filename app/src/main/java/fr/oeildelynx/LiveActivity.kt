@@ -82,14 +82,68 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             addView(TextView(this@LiveActivity).apply { text = "REC"; textSize = 11.5f; letterSpacing = .12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD })
         }
         top.addView(recBadge)
-        top.addView(iconButton(R.drawable.ic_sun, "Exposition") { showExposure() })
         top.addView(iconButton(R.drawable.ic_gallery, "Galerie de la caméra") {
             startActivity(Intent(this, RemoteGalleryActivity::class.java).putExtra(EXTRA_CAMERA_ID, camera.id))
         })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+
+        // Barre du bas : son, rotation de l’image, exposition de la caméra.
+        val bottom = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            setPadding(dp(16), dp(30), dp(16), dp(22))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xe60b110e.toInt(), 0x990b110e.toInt(), 0x000b110e))
+        }
+        val sound = control(R.drawable.ic_volume, "Son") { setSound(!soundOn) }
+        soundIcon = sound.second; soundLabel = sound.third
+        bottom.addView(sound.first, LinearLayout.LayoutParams(0, -2, 1f))
+        bottom.addView(control(R.drawable.ic_rotate, "Pivoter") { rotateImage() }.first, LinearLayout.LayoutParams(0, -2, 1f))
+        bottom.addView(control(R.drawable.ic_sun, "Exposition") { showExposure() }.first, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         setContentView(root)
 
-        client = LiveClient(applicationContext, camera.id, this)
+        cameraKey = camera.id
+        client = LiveClient(applicationContext, camera.id, this).apply {
+            extraRotation = viewerPrefs.getInt("rotation_${camera.id}", 0)
+            audioEnabled = viewerPrefs.getBoolean("audio_${camera.id}", true)
+        }
+        soundOn = client?.audioEnabled == true
+        renderSound()
+    }
+
+    private val viewerPrefs by lazy { getSharedPreferences("lynx_viewer", MODE_PRIVATE) }
+    private var cameraKey = ""
+    private var soundOn = true
+    private lateinit var soundIcon: ImageView
+    private lateinit var soundLabel: TextView
+
+    /** Bouton rond + libellé, comme sur l’écran caméra. */
+    private fun control(@DrawableRes icon: Int, label: String, action: () -> Unit): Triple<LinearLayout, ImageView, TextView> {
+        val button = LynxUi.iconButton(this, icon, label, 0x66223029, 52) { action() }
+        val text = TextView(this).apply { this.text = label; textSize = 11.5f; gravity = Gravity.CENTER; setTextColor(0xffd5ded8.toInt()); setPadding(0, LynxUi.dp(this@LiveActivity, 6), 0, 0) }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; addView(button); addView(text) }
+        return Triple(box, button, text)
+    }
+
+    private fun setSound(on: Boolean) {
+        soundOn = on
+        viewerPrefs.edit().putBoolean("audio_$cameraKey", on).apply()
+        client?.audioEnabled = on
+        renderSound()
+    }
+
+    private fun renderSound() {
+        if (!::soundIcon.isInitialized) return
+        soundIcon.setImageResource(if (soundOn) R.drawable.ic_volume else R.drawable.ic_volume_off)
+        soundIcon.contentDescription = if (soundOn) "Couper le son" else "Activer le son"
+        soundLabel.text = if (soundOn) "Son activé" else "Son coupé"
+    }
+
+    /** Tourne l’image d’un quart de tour (mémorisé pour cette caméra), au cas où la caméra se trompe de sens. */
+    private fun rotateImage() {
+        val next = ((client?.extraRotation ?: 0) + 90) % 360
+        client?.extraRotation = next
+        viewerPrefs.edit().putInt("rotation_$cameraKey", next).apply()
+        Toast.makeText(this, if (next == 0) "Rotation d’origine" else "Image tournée de $next°", Toast.LENGTH_SHORT).show()
     }
 
     private fun iconButton(@DrawableRes icon: Int, description: String, action: () -> Unit) =

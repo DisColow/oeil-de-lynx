@@ -53,7 +53,13 @@ class MonitorService : LifecycleService() {
     private var lastMotionAt = 0L
     private var lastSoundAt = 0L
     private var boundCamera: androidx.camera.core.Camera? = null
+    private var analysisUseCase: ImageAnalysis? = null
+    private var orientationListener: android.view.OrientationEventListener? = null
+    // Surface.ROTATION_* déduite du capteur ; le service n’a pas d’écran pour la donner.
+    @Volatile private var deviceRotation = android.view.Surface.ROTATION_0
     @Volatile private var recordingReason = ""
+    private var liveAudio: AudioRecord? = null
+    @Volatile private var startingRecording = false
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
     private var lastFrameAt = 0L
@@ -108,6 +114,24 @@ class MonitorService : LifecycleService() {
         // Le son peut se déclencher avant la fin du lien CameraX ; videoCapture est vérifié au déclenchement.
         startSoundDetection()
         startLive()
+        startOrientationTracking()
+    }
+
+    /**
+     * Suit la position physique du téléphone (portrait, paysage, à l’envers). La rotation des images
+     * d’analyse (direct) change aussitôt ; celle des clips s’applique au prochain enregistrement.
+     */
+    private fun startOrientationTracking() {
+        orientationListener = object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(degrees: Int) {
+                val rotation = DeviceOrientation.surfaceRotation(degrees, deviceRotation)
+                if (rotation == deviceRotation) return
+                deviceRotation = rotation
+                Log.i(TAG, "Device rotation now $rotation")
+                analysisUseCase?.targetRotation = rotation
+                videoCapture?.targetRotation = rotation
+            }
+        }.also { if (it.canDetectOrientation()) it.enable() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -131,13 +155,15 @@ class MonitorService : LifecycleService() {
         // Demande SD pour limiter chauffe et stockage, avec LOWEST comme repli sur les appareils atypiques.
         val quality = QualitySelector.fromOrderedList(listOf(Quality.SD, Quality.LOWEST))
         val recorder = Recorder.Builder().setQualitySelector(quality).build()
-        videoCapture = VideoCapture.withOutput(recorder)
+        // Orientation physique du téléphone : image droite dans le direct et dans les clips, même en paysage.
+        videoCapture = VideoCapture.withOutput(recorder).also { it.targetRotation = deviceRotation }
         val preview = Preview.Builder().build()
         activePreview = preview
         preview.setSurfaceProvider(previewSurfaceProvider)
         // 640 × 480 : assez net pour le direct ; la détection n’échantillonne qu’une grille de 40 × 30 points.
         val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setTargetResolution(android.util.Size(640, 480)).build()
+            .setTargetResolution(android.util.Size(640, 480)).setTargetRotation(deviceRotation).build()
+        analysisUseCase = analysis
         analysis.setAnalyzer(executor) { image -> analyzeFrame(image) }
         return try {
             provider.unbindAll()
@@ -276,6 +302,9 @@ class MonitorService : LifecycleService() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         // Libère le micro AudioRecord pour que CameraX puisse enregistrer la piste audio du clip.
         stopSoundDetection()
+        // Le son du direct reprend dès que CameraX a ouvert le micro (événement Start ou fin du clip).
+        startingRecording = true
+        stopLiveAudio()
         val now = System.currentTimeMillis()
         val outputName = "lynx_$now.mp4"
         val values = ContentValues().apply {
@@ -293,6 +322,8 @@ class MonitorService : LifecycleService() {
             capture.output.prepareRecording(this, options)
                 .withAudioEnabled().start(ContextCompat.getMainExecutor(this)) { event ->
                     if (event is VideoRecordEvent.Finalize) {
+                        startingRecording = false
+                        if (!shuttingDown) startLiveAudio()
                         synchronized(this) {
                             recording = null
                             publishLiveStatus()
@@ -310,6 +341,8 @@ class MonitorService : LifecycleService() {
                             detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
                         )
                     } else if (event is VideoRecordEvent.Start) {
+                        startingRecording = false
+                        startLiveAudio()
                         getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · enregistrement en cours", outputName, detectionId)
                         )
@@ -320,6 +353,8 @@ class MonitorService : LifecycleService() {
                 }
         } catch (_: SecurityException) {
             // Une permission révoquée au même instant qu’un déclenchement ne doit pas tuer le service.
+            startingRecording = false
+            startLiveAudio()
             startSoundDetection()
             return
         }
@@ -360,6 +395,9 @@ class MonitorService : LifecycleService() {
                     }
                 },
                 gallery = CaptureLibrary(applicationContext),
+                onAudioDemandChanged = { demand ->
+                    ContextCompat.getMainExecutor(this).execute { if (demand && !shuttingDown) startLiveAudio() else stopLiveAudio() }
+                },
                 onViewersChanged = { count ->
                     liveViewers = count
                     ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) updateStatus(statusText) }
@@ -381,7 +419,42 @@ class MonitorService : LifecycleService() {
         Thread({ LiveCamera.probeBox(applicationContext, openPort = true) }, "lynx-upnp").start()
     }
 
+    /**
+     * Micro du direct (16 kHz, µ-law), ouvert seulement quand un spectateur écoute. Il coexiste avec
+     * l’enregistrement des clips : il est suspendu au lancement d’un clip, puis rouvert une fois que
+     * CameraX tient le micro, pour ne jamais gêner la piste audio du clip.
+     */
+    @Synchronized private fun startLiveAudio() {
+        if (liveAudio != null || liveServer?.hasAudioListeners() != true || startingRecording) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        val rate = LiveProtocol.AUDIO_SAMPLE_RATE
+        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return
+        val rec = try { AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 8192)) } catch (_: Exception) { return }
+        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return }
+        try { rec.startRecording() } catch (_: Exception) { rec.release(); return }
+        liveAudio = rec
+        Log.i(TAG, "Live audio started")
+        Thread {
+            val samples = ShortArray(1024) // 64 ms
+            while (liveAudio === rec && rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                val n = try { rec.read(samples, 0, samples.size) } catch (_: Exception) { -1 }
+                if (n < 0) break
+                if (n > 0) liveServer?.publishAudio(MuLaw.encode(samples, n))
+            }
+        }.apply { name = "lynx-live-audio"; start() }
+    }
+
+    @Synchronized private fun stopLiveAudio() {
+        val rec = liveAudio ?: return
+        liveAudio = null
+        try { rec.stop() } catch (_: Exception) { }
+        rec.release()
+        Log.i(TAG, "Live audio stopped")
+    }
+
     private fun stopLive() {
+        stopLiveAudio()
         val server = liveServer ?: return
         liveServer = null
         server.stop(sayGoodbye = true)
@@ -457,6 +530,7 @@ class MonitorService : LifecycleService() {
         pendingCameraFacing = null
         recording?.stop(); stopSoundDetection()
         stopLive()
+        orientationListener?.disable(); orientationListener = null
         activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
         if (::executor.isInitialized) executor.shutdownNow()
