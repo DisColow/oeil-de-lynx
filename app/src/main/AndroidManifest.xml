@@ -28,12 +28,12 @@
             <!-- Appui long sur l’icône : accès direct au mode spectateur. -->
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
-        <activity android:name=".GalleryActivity" android:exported="false" android:screenOrientation="fullSensor" />
+        <activity android:name=".GalleryActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:screenOrientation="fullSensor" />
         <activity android:name=".PairingActivity" android:exported="false" />
         <activity android:name=".ViewerActivity" android:exported="false" />
         <activity android:name=".ScanActivity" android:exported="false" />
-        <activity android:name=".RemoteGalleryActivity" android:exported="false" android:screenOrientation="fullSensor" />
-        <activity android:name=".LiveActivity" android:exported="false" android:screenOrientation="fullSensor" />
+        <activity android:name=".RemoteGalleryActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:screenOrientation="fullSensor" />
+        <activity android:name=".LiveActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:screenOrientation="fullSensor" />
         <service android:name=".MonitorService" android:exported="false" android:foregroundServiceType="camera|microphone" />
         <service android:name=".AlertService" android:exported="false" android:foregroundServiceType="specialUse">
             <property

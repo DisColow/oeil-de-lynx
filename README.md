@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.9.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.9.2`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.9.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.9.2` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -77,7 +77,7 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 Dans l’écran du direct :
 
 - **☀** règle la correction d’exposition de la caméra (curseur en EV, bouton « Auto » pour revenir à 0). Le réglage est enregistré sur le téléphone caméra et réappliqué à chaque démarrage ; il se règle aussi sur place par Réglages › Exposition.
-- **▧** ouvre la galerie de la caméra : liste des 200 derniers clips avec miniatures, puis téléchargement du clip touché par la même connexion directe et chiffrée, et lecture sur le téléphone spectateur. Les clips téléchargés sont gardés en cache (300 Mo au plus) et ne sont pas retéléchargés. Un clip SD pèse environ 10 à 20 Mo par minute : en 4G, le téléchargement consomme le forfait du spectateur et l’envoi montant de la box.
+- **▧** ouvre la galerie de la caméra : liste des 200 derniers clips avec miniatures, puis téléchargement du clip touché par la même connexion directe et chiffrée, et lecture sur le téléphone spectateur. Pendant le téléchargement, un panneau affiche le pourcentage, la quantité reçue, la vitesse (moyenne sur les 3 dernières secondes) et le temps restant estimé, avec un bouton Annuler ; tourner le téléphone ne l’interrompt pas. Les clips téléchargés sont gardés en cache (300 Mo au plus) et ne sont pas retéléchargés. Un clip SD pèse environ 10 à 20 Mo par minute : en 4G, le téléchargement consomme le forfait du spectateur et l’envoi montant de la box.
 
 Comme le direct, la galerie à distance n’est accessible que pendant la surveillance (c’est le service de surveillance qui répond), et la caméra doit être en version 1.7.0 ou plus.
 
@@ -106,6 +106,7 @@ L’interface est construite en Kotlin avec des vues Android créées directemen
 | `MainActivity.kt` | HUD caméra, permissions, aperçu, réglages, état de surveillance et démarrage/arrêt du service. |
 | `MonitorService.kt` | Service de premier plan, session CameraX, détections audio/vidéo, enregistrement MediaStore et notifications. |
 | `GalleryActivity.kt` | Liste des vidéos, miniatures, sélection, suppression confirmée et lecteur intégré. |
+| `TransferStats.kt` | Vitesse, quantité reçue et temps restant des téléchargements de la galerie distante. |
 | `ClipPlayer.kt` | Lecteur vidéo des galeries (TextureView) : plein écran proportionné et rotation par quart de tour. |
 | `DeviceOrientation.kt` | Position physique du téléphone caméra → rotation des images (direct et clips). |
 | `LynxUi.kt` | Système visuel commun : couleurs, typographie, boutons, cartes, pastilles d’état, feuille de menu. |
@@ -190,11 +191,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.9.1
-git push origin v1.9.1
+git tag v1.9.2
+git push origin v1.9.2
 ```
 
-Remplacer `1.9.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.9.2` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
