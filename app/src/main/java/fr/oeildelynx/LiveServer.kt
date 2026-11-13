@@ -26,6 +26,8 @@ internal interface LiveGallery {
     fun list(): List<Map<String, String>>
     fun thumbnail(id: Long): ByteArray?
     fun open(id: Long): InputStream?
+    /** Taille réelle du fichier en octets (0 si inconnue). */
+    fun size(id: Long): Long = 0
 }
 
 internal class LiveServer(
@@ -263,6 +265,8 @@ internal class LiveServer(
                     "file" -> {
                         val input = id?.let { gallery.open(it) }
                         if (input == null) { channel.send(LiveProtocol.TYPE_ERROR, "Vidéo introuvable".toByteArray()); continue }
+                        // Taille lue sur le fichier : celle de la médiathèque peut valoir 0 pour un clip récent.
+                        channel.send(LiveProtocol.TYPE_FILE_SIZE, gallery.size(id).toString().toByteArray())
                         input.use {
                             val buffer = ByteArray(CHUNK_BYTES)
                             while (true) {
@@ -291,7 +295,8 @@ internal class LiveServer(
         private const val MAX_GALLERY = 2
         private const val MAX_AUDIO_CHUNKS = 16
         private const val GALLERY_IDLE_MS = 120_000
-        private const val CHUNK_BYTES = 256 * 1024
+        // Morceaux de 64 ko : progression fluide côté spectateur, même sur un Wi-Fi rapide.
+        private const val CHUNK_BYTES = 64 * 1024
         private const val ALERT_KEEPALIVE_MS = 25_000L
         private const val MAX_PENDING = 4
         private const val HANDSHAKE_TIMEOUT_MS = 6_000

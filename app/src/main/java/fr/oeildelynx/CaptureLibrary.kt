@@ -71,6 +71,10 @@ internal class CaptureLibrary(private val context: Context) : LiveGallery {
         return bytes
     }
 
+    override fun size(id: Long): Long = try {
+        if (owns(id)) context.contentResolver.openFileDescriptor(uri(id), "r")?.use { it.statSize } ?: 0L else 0L
+    } catch (_: Exception) { 0L }
+
     override fun open(id: Long): InputStream? = if (owns(id)) context.contentResolver.openInputStream(uri(id)) else null
 
     private fun uri(id: Long) = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)

@@ -51,6 +51,7 @@ internal object LiveProtocol {
     const val TYPE_CHUNK = 0x23     // caméra → spectateur : morceau de fichier vidéo
     const val TYPE_END = 0x24       // caméra → spectateur : fin du fichier
     const val TYPE_ERROR = 0x25     // caméra → spectateur : message d’erreur
+    const val TYPE_FILE_SIZE = 0x26 // caméra → spectateur : taille réelle du fichier, avant ses morceaux (1.9.5)
     // Depuis 1.9.0 : son du direct (G.711 µ-law, 16 kHz mono), envoyé aux spectateurs qui le demandent.
     const val TYPE_AUDIO = 0x14     // caméra → spectateur : échantillons µ-law
 

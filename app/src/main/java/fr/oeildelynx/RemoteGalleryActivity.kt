@@ -151,7 +151,8 @@ class RemoteGalleryActivity : ComponentActivity() {
     /** Télécharge le clip dans le cache (réutilisé s’il est déjà là), puis le lit. */
     private fun download(clip: Clip) {
         val file = File(File(cacheDir, "remote").apply { mkdirs() }, "${cameraId.take(8)}_${clip.id}.mp4")
-        if (file.exists() && file.length() == clip.size && clip.size > 0) { play(file, clip); return }
+        // Un fichier complet n’existe qu’après un transfert réussi (le partiel porte l’extension .part).
+        if (file.exists() && file.length() > 0) { play(file, clip); return }
         // Panneau de progression : pourcentage, quantité reçue, vitesse et temps restant estimé.
         val percent = LynxUi.title(this, "0 %", 34f).apply { gravity = Gravity.CENTER }
         val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -195,18 +196,20 @@ class RemoteGalleryActivity : ComponentActivity() {
                 if (cancelled) throw java.io.IOException("annulé")
                 runOnUiThread { speed.text = "Démarrage du transfert…" }
                 partial.outputStream().buffered().use { output ->
-                    gallery.download(clip.id, output) { received ->
+                    gallery.download(clip.id, output, onSize = { size -> stats.total = size }) { received ->
                         val now = android.os.SystemClock.elapsedRealtime()
                         stats.update(now, received)
-                        // Quatre rafraîchissements par seconde au plus.
-                        if (now - lastUi < 250 && received < clip.size) return@download
+                        // Jusqu’à huit rafraîchissements par seconde ; le dernier morceau est toujours affiché.
+                        if (now - lastUi < 120 && received < stats.total) return@download
                         lastUi = now
                         val fraction = stats.fraction
                         val rate = stats.bytesPerSecond
                         val left = stats.remainingSeconds
+                        val total = stats.total
                         runOnUiThread {
                             if (fraction != null) { percent.text = "${(fraction * 100).toInt()} %"; progress.progress = (fraction * 1000).toInt() }
-                            amount.text = "${TransferStats.formatSize(received)} sur ${TransferStats.formatSize(clip.size)}"
+                            amount.text = if (total > 0) "${TransferStats.formatSize(received)} sur ${TransferStats.formatSize(total)}"
+                                else "${TransferStats.formatSize(received)} reçus"
                             if (rate != null) speed.text = TransferStats.formatSpeed(rate)
                             if (left != null) remaining.text = TransferStats.formatRemaining(left)
                         }
@@ -215,6 +218,12 @@ class RemoteGalleryActivity : ComponentActivity() {
                 partial.renameTo(file)
                 trimCache()
                 downloadRequested = false
+                // Affiche « 100 % » un court instant avant d’ouvrir la vidéo : on voit que le transfert est complet.
+                runOnUiThread {
+                    percent.text = "100 %"; progress.progress = 1000; remaining.text = "Terminé"
+                    speed.text = stats.bytesPerSecond?.let { "Moyenne : " + TransferStats.formatSpeed(it) } ?: speed.text
+                }
+                Thread.sleep(600)
                 runOnUiThread { root.removeView(overlay); if (!isDestroyed) play(file, clip) }
             } catch (error: Exception) {
                 partial.delete(); session?.close(); session = null
