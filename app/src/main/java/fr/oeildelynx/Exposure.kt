@@ -85,13 +85,63 @@ internal object Exposure {
         prefs(context).edit().putInt(PREF_INDEX, bounded).apply()
     }
 
+    private const val PREF_METER_X = "meter_x"
+    private const val PREF_METER_Y = "meter_y"
+
+    /** Zone de mesure de la lumière choisie (coordonnées 0–1 dans l’image d’analyse), ou null = automatique. */
+    fun meteringZone(context: Context): Pair<Float, Float>? {
+        val x = prefs(context).getFloat(PREF_METER_X, -1f); val y = prefs(context).getFloat(PREF_METER_Y, -1f)
+        return if (x in 0f..1f && y in 0f..1f) x to y else null
+    }
+
+    fun setMeteringZone(context: Context, zone: Pair<Float, Float>?) {
+        prefs(context).edit().putFloat(PREF_METER_X, zone?.first ?: -1f).putFloat(PREF_METER_Y, zone?.second ?: -1f).apply()
+    }
+
+    /**
+     * Applique la zone de mesure (ou le retour en automatique) : la caméra calcule sa luminosité sur
+     * cette zone, comme quand on touche l’écran dans l’appareil photo. Réessaie tant que la caméra s’ouvre.
+     */
+    fun applyMetering(context: Context, camera: Camera, analysis: androidx.camera.core.ImageAnalysis, attemptsLeft: Int = MAX_ATTEMPTS, onDone: () -> Unit = {}) {
+        val zone = meteringZone(context)
+        val control = camera.cameraControl
+        if (zone == null) {
+            control.cancelFocusAndMetering()
+            prefs(context).edit().putString(PREF_METER_REPORT, "Lumière : automatique sur toute l’image.").apply()
+            onDone(); return
+        }
+        val point = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f, analysis).createPoint(zone.first, zone.second, 0.2f)
+        val action = androidx.camera.core.FocusMeteringAction.Builder(point, androidx.camera.core.FocusMeteringAction.FLAG_AE)
+            .disableAutoCancel().build()
+        if (!camera.cameraInfo.isFocusMeteringSupported(action)) {
+            prefs(context).edit().putString(PREF_METER_REPORT, "Lumière : ce téléphone ne permet pas de mesurer sur une zone.").apply()
+            onDone(); return
+        }
+        val future = control.startFocusAndMetering(action)
+        future.addListener({
+            val ok = try { future.get(); true } catch (error: Exception) {
+                Log.w(TAG, "Metering not applied yet (${error.javaClass.simpleName}), $attemptsLeft attempt(s) left"); false
+            }
+            when {
+                ok -> { prefs(context).edit().putString(PREF_METER_REPORT, "Lumière : mesurée sur la zone touchée.").apply(); onDone() }
+                attemptsLeft > 0 && meteringZone(context) == zone ->
+                    handler.postDelayed({ applyMetering(context, camera, analysis, attemptsLeft - 1, onDone) }, RETRY_DELAY_MS)
+                attemptsLeft == 0 -> { prefs(context).edit().putString(PREF_METER_REPORT, "Lumière : zone refusée par la caméra.").apply(); onDone() }
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    private const val PREF_METER_REPORT = "meter_report"
+    fun meteringReport(context: Context): String = prefs(context).getString(PREF_METER_REPORT, null) ?: "Lumière : automatique sur toute l’image."
+
     /** Ce que la caméra a réellement fait du dernier réglage (affiché pour comprendre un échec). */
     fun report(context: Context): String = prefs(context).getString(PREF_REPORT, null) ?: "Aucun réglage envoyé à la caméra pour l’instant."
 
     /** Champs envoyés aux spectateurs dans l’état du direct. */
     fun fields(context: Context): Map<String, String> = range(context).let {
         mapOf("exp" to it.index.toString(), "expmin" to it.min.toString(), "expmax" to it.max.toString(),
-            "expstep" to it.step.toString(), "expreport" to report(context))
+            "expstep" to it.step.toString(), "expreport" to report(context) + "\n" + meteringReport(context),
+            "meter" to if (meteringZone(context) != null) "1" else "0")
     }
 
     fun label(index: Int, step: Float): String {

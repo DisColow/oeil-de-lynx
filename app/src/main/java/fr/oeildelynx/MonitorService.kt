@@ -177,7 +177,10 @@ class MonitorService : LifecycleService() {
             provider.unbindAll()
             val selector = if (useFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             boundCamera = provider.bindToLifecycle(this, selector, videoCapture, analysis, preview)
-                .also { Exposure.apply(this, it) { publishLiveStatus() } }
+                .also { camera ->
+                    Exposure.apply(this, camera) { publishLiveStatus() }
+                    Exposure.applyMetering(this, camera, analysis) { publishLiveStatus() }
+                }
             Log.i(TAG, "CameraX bound to ${if (useFrontCamera) "front" else "back"} camera")
             true
         } catch (error: Exception) {
@@ -400,6 +403,11 @@ class MonitorService : LifecycleService() {
                     val value = request["value"]?.toIntOrNull()
                     if (request["op"] == "exposure" && value != null) {
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setExposure(value) }
+                    } else if (request["op"] == "meter") {
+                        // Zone touchée dans le direct (x, y entre 0 et 1), ou reset=1 pour revenir en automatique.
+                        val x = request["x"]?.toFloatOrNull(); val y = request["y"]?.toFloatOrNull()
+                        val zone = if (request["reset"] == "1" || x == null || y == null) null else x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+                        ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setMetering(zone) }
                     } else if (request["op"] == "alarm" || request["op"] == "sound") {
                         control(request)
                     }
@@ -484,6 +492,13 @@ class MonitorService : LifecycleService() {
         "n" to LiveCamera.name(this),
         "h" to LiveCamera.candidates(this).joinToString(",")
     )
+
+    private fun setMetering(zone: Pair<Float, Float>?) {
+        Exposure.setMeteringZone(this, zone)
+        val camera = boundCamera; val analysis = analysisUseCase
+        if (camera != null && analysis != null) Exposure.applyMetering(this, camera, analysis) { publishLiveStatus() }
+        publishLiveStatus()
+    }
 
     /** Correction d’exposition demandée par le HUD ou par un spectateur (thread principal). */
     private fun setExposure(index: Int) {

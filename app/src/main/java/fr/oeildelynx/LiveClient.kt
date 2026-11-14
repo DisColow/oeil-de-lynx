@@ -71,6 +71,10 @@ internal class LiveClient(
     /** Rotation ajoutée par l’utilisateur (0, 90, 180, 270), si la caméra signale mal sa position. */
     @Volatile var extraRotation = 0
 
+    /** Rotation totale appliquée à la dernière image affichée (pour retrouver un point touché). */
+    @Volatile var lastFrameRotation = 0
+        private set
+
     /** Son du direct demandé à la caméra ; modifiable pendant la connexion. */
     @Volatile var audioEnabled = false
         set(value) {
@@ -303,6 +307,7 @@ internal class LiveClient(
                     if (record.payload.size < 3) continue
                     val rotation = ((((record.payload[0].toInt() and 0xff) shl 8) or (record.payload[1].toInt() and 0xff)) + extraRotation) % 360
                     val decoded = BitmapFactory.decodeByteArray(record.payload, 2, record.payload.size - 2) ?: continue
+                    lastFrameRotation = rotation
                     val bitmap = if (rotation % 360 == 0) decoded else
                         Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, Matrix().apply { postRotate(rotation.toFloat()) }, true)
                             .also { if (it !== decoded) decoded.recycle() }

@@ -48,3 +48,14 @@ class AlarmSirenTest {
         org.junit.Assert.assertTrue(loud > samples.size / 2)
     }
 }
+
+class MeteringZoneTest {
+    @Test fun touchedPointMapsBackToSourceImage() {
+        // Coin haut-gauche de la source : après un quart de tour horaire, il est en haut à droite de l’écran.
+        assertEquals(0f to 0f, MeteringZone.toSource(1f, 0f, 90))
+        assertEquals(0f to 0f, MeteringZone.toSource(1f, 1f, 180))
+        assertEquals(0f to 0f, MeteringZone.toSource(0f, 1f, 270))
+        assertEquals(0.25f to 0.75f, MeteringZone.toSource(0.25f, 0.75f, 0))
+        assertEquals(0.5f to 0.5f, MeteringZone.toSource(0.5f, 0.5f, 450 - 360))
+    }
+}
