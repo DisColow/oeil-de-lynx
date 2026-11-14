@@ -100,6 +100,9 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         bottom.addView(sound.first, LinearLayout.LayoutParams(0, -2, 1f))
         bottom.addView(control(R.drawable.ic_rotate, "Pivoter") { rotateImage() }.first, LinearLayout.LayoutParams(0, -2, 1f))
         bottom.addView(control(R.drawable.ic_sun, "Exposition") { showExposure() }.first, LinearLayout.LayoutParams(0, -2, 1f))
+        val alarm = control(R.drawable.ic_bell, "Alarme") { toggleAlarm() }
+        alarmIcon = alarm.second; alarmLabel = alarm.third
+        bottom.addView(alarm.first, LinearLayout.LayoutParams(0, -2, 1f))
         panel.addView(bottom, LinearLayout.LayoutParams(-1, -2))
         root.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         setContentView(root)
@@ -172,6 +175,20 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         (talkPill.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(LynxUi.ON_ACCENT)
     }
 
+    private var exposureReport: TextView? = null
+    private lateinit var alarmIcon: ImageView
+    private lateinit var alarmLabel: TextView
+
+    /** Sirène de la caméra : confirmation avant de la déclencher, arrêt immédiat sinon. */
+    private fun toggleAlarm() {
+        if (lastStatus["alarm"] == "1") { client?.sendRequest(mapOf("op" to "alarm", "value" to "0")); return }
+        if (lastStatus.isEmpty()) { Toast.makeText(this, "Direct non connecté.", Toast.LENGTH_SHORT).show(); return }
+        AlertDialog.Builder(this).setTitle("Déclencher l’alarme ?")
+            .setMessage("Une sirène stridente va retentir sur la caméra, volume au maximum, même en silencieux, pendant 2 minutes ou jusqu’à ce que tu l’arrêtes.")
+            .setPositiveButton("Déclencher") { _, _ -> client?.sendRequest(mapOf("op" to "alarm", "value" to "1")) }
+            .setNegativeButton("Annuler", null).show()
+    }
+
     private val viewerPrefs by lazy { getSharedPreferences("lynx_viewer", MODE_PRIVATE) }
     private var cameraKey = ""
     private var soundOn = true
@@ -230,8 +247,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             override fun onStopTrackingTouch(bar: SeekBar) { client?.sendRequest(mapOf("op" to "exposure", "value" to (min + bar.progress).toString())) }
         })
         val pad = LynxUi.dp(this, 20)
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(value); addView(seek) }
+        // Ce que la caméra a réellement fait du réglage : mis à jour à chaque état reçu.
+        val report = LynxUi.body(this, status["expreport"] ?: "", 12.5f).apply { setPadding(0, LynxUi.dp(this@LiveActivity, 10), 0, 0) }
+        exposureReport = report
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(value); addView(seek); addView(report) }
         AlertDialog.Builder(this).setTitle("Exposition de la caméra").setView(content)
+            .setOnDismissListener { exposureReport = null }
             .setNeutralButton("Auto") { _, _ -> client?.sendRequest(mapOf("op" to "exposure", "value" to "0")) }
             .setPositiveButton("OK", null).show()
     }
@@ -277,6 +298,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
         lastStatus = fields
+        fields["expreport"]?.let { exposureReport?.text = it }
+        val alarmOn = fields["alarm"] == "1"
+        if (::alarmIcon.isInitialized) {
+            alarmIcon.background = LynxUi.pressableCircle(if (alarmOn) LynxUi.DANGER else 0x66223029)
+            alarmLabel.text = if (alarmOn) "Arrêter alarme" else "Alarme"
+        }
         recBadge.visibility = if (fields["rec"] == "1") View.VISIBLE else View.GONE
         fields["n"]?.takeIf { it.isNotBlank() }?.let { title.text = it }
     }

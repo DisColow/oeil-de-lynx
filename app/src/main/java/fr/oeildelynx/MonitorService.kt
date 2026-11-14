@@ -61,6 +61,8 @@ class MonitorService : LifecycleService() {
     private var liveAudio: AudioRecord? = null
     // Haut-parleur de la voix des spectateurs, créé au premier « Parler ».
     @Volatile private var talkSpeaker: TalkSpeaker? = null
+    // Sirène déclenchée par un spectateur.
+    @Volatile private var siren: AlarmSiren? = null
     @Volatile private var startingRecording = false
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
@@ -141,6 +143,10 @@ class MonitorService : LifecycleService() {
         Log.i(TAG, "Service start command: ${intent?.action ?: "START"}")
         if (intent?.action == ACTION_SWITCH_CAMERA) {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
+        } else if (intent?.action == ACTION_STOP_ALARM) {
+            stopSiren()
+        } else if (intent?.action == ACTION_SET_SOUND && !shuttingDown) {
+            setSoundTrigger(intent.getBooleanExtra(EXTRA_SOUND, false))
         } else if (intent?.action == ACTION_SET_EXPOSURE && !shuttingDown) {
             setExposure(intent.getIntExtra(EXTRA_EXPOSURE, 0))
         } else if (intent?.action == ACTION_LIVE_REFRESH && !shuttingDown) {
@@ -394,8 +400,11 @@ class MonitorService : LifecycleService() {
                     val value = request["value"]?.toIntOrNull()
                     if (request["op"] == "exposure" && value != null) {
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setExposure(value) }
+                    } else if (request["op"] == "alarm" || request["op"] == "sound") {
+                        control(request)
                     }
                 },
+                onControl = { request -> control(request) },
                 gallery = CaptureLibrary(applicationContext),
                 onTalk = { chunk -> (talkSpeaker ?: TalkSpeaker(applicationContext).also { talkSpeaker = it }).play(chunk) },
                 onAudioDemandChanged = { demand ->
@@ -458,6 +467,7 @@ class MonitorService : LifecycleService() {
 
     private fun stopLive() {
         stopLiveAudio()
+        siren?.stop(); siren = null
         talkSpeaker?.release(); talkSpeaker = null
         val server = liveServer ?: return
         liveServer = null
@@ -484,12 +494,57 @@ class MonitorService : LifecycleService() {
     }
 
     private fun publishLiveStatus() {
-        liveServer?.publishStatus(linkedMapOf(
-            "rec" to if (recording != null) "1" else "0",
-            "why" to if (recording != null) recordingReason else "",
-            "cam" to if (useFrontCamera) "front" else "back",
-            "n" to LiveCamera.name(this)
-        ) + Exposure.fields(this))
+        liveServer?.publishStatus(controlState() + Exposure.fields(this))
+    }
+
+    /** État envoyé aux spectateurs : enregistrement, caméra, sirène, détection du son. */
+    private fun controlState(): Map<String, String> = linkedMapOf(
+        "rec" to if (recording != null) "1" else "0",
+        "why" to if (recording != null) recordingReason else "",
+        "cam" to if (useFrontCamera) "front" else "back",
+        "n" to LiveCamera.name(this),
+        "alarm" to if (siren?.isRunning == true) "1" else "0",
+        "sound" to if (getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) "1" else "0"
+    )
+
+    /**
+     * Commandes d’un spectateur : `op=alarm|sound&value=1|0`, ou `op=settings` pour lire l’état.
+     * Exécutées sur le thread principal ; renvoie l’état à jour. Appelée depuis un thread réseau.
+     */
+    private fun control(request: Map<String, String>): Map<String, String> {
+        val task = java.util.concurrent.FutureTask {
+            if (!shuttingDown) {
+                val on = request["value"] == "1"
+                when (request["op"]) {
+                    "alarm" -> if (on) startSiren() else stopSiren()
+                    "sound" -> setSoundTrigger(on)
+                }
+            }
+            controlState()
+        }
+        ContextCompat.getMainExecutor(this).execute(task)
+        return try { task.get(5, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { controlState() }
+    }
+
+    private fun startSiren() {
+        val alarm = siren ?: AlarmSiren(applicationContext) {
+            ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) { updateStatus(statusText); publishLiveStatus() } }
+        }.also { siren = it }
+        alarm.start()
+        updateStatus(statusText)
+        publishLiveStatus()
+    }
+
+    private fun stopSiren() {
+        siren?.stop()
+        publishLiveStatus()
+    }
+
+    /** Détection du son activée ou coupée tout de suite, sans redémarrer la surveillance. */
+    private fun setSoundTrigger(on: Boolean) {
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean(PREF_SOUND_TRIGGER, on).apply()
+        if (on) startSoundDetection() else stopSoundDetection()
+        publishLiveStatus()
     }
 
     /** Notification permanente : état de surveillance + nombre de spectateurs en direct, par transparence. */
@@ -511,7 +566,15 @@ class MonitorService : LifecycleService() {
     }
     private fun notification(message: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Œil de Lynx").setContentText(message)
-        .setOngoing(true).setOnlyAlertOnce(true).build()
+        .setOngoing(true).setOnlyAlertOnce(true)
+        .apply {
+            // Sirène en cours : bouton pour l’arrêter directement depuis le téléphone caméra.
+            if (siren?.isRunning == true) {
+                setContentText("Alarme en cours · $message")
+                addAction(0, "Arrêter l’alarme", PendingIntent.getService(this@MonitorService, 7,
+                    Intent(this@MonitorService, MonitorService::class.java).setAction(ACTION_STOP_ALARM), PendingIntent.FLAG_IMMUTABLE))
+            }
+        }.build()
 
     private fun detectionNotification(message: String, fileName: String, requestCode: Int): Notification {
         // Transmet le nom MediaStore pour que la galerie puisse retrouver le clip signalé.
@@ -570,6 +633,9 @@ class MonitorService : LifecycleService() {
         const val ACTION_MONITOR_STATE_CHANGED = "fr.oeildelynx.action.MONITOR_STATE_CHANGED"
         const val ACTION_LIVE_REFRESH = "fr.oeildelynx.action.LIVE_REFRESH"
         const val ACTION_SET_EXPOSURE = "fr.oeildelynx.action.SET_EXPOSURE"
+        const val ACTION_STOP_ALARM = "fr.oeildelynx.action.STOP_ALARM"
+        const val ACTION_SET_SOUND = "fr.oeildelynx.action.SET_SOUND"
+        const val EXTRA_SOUND = "sound_trigger"
         const val EXTRA_EXPOSURE = "exposure_index"
         const val ACTION_LIVE_VIEWERS_CHANGED = "fr.oeildelynx.action.LIVE_VIEWERS_CHANGED"
         const val EXTRA_LIVE_VIEWERS = "live_viewers"

@@ -64,6 +64,80 @@ class ViewerActivity : ComponentActivity() {
         super.onResume()
         enableImmersiveMode()
         refresh()
+        ViewerStore.cameras(this).forEach { fetchState(it.id) }
+    }
+
+    // État lu sur chaque caméra (sirène, détection du son) ; null = pas encore connu ou injoignable.
+    private val remoteState = mutableMapOf<String, Map<String, String>?>()
+    private val remoteError = mutableMapOf<String, String>()
+    private val pending = mutableSetOf<String>()
+
+    /** Interroge la caméra en arrière-plan (elle doit être en surveillance pour répondre). */
+    private fun fetchState(cameraId: String) = sendControl(cameraId, mapOf("op" to "settings"), quiet = true)
+
+    private fun sendControl(cameraId: String, fields: Map<String, String>, quiet: Boolean = false) {
+        if (!pending.add(cameraId)) return
+        refresh()
+        Thread {
+            val result = try { Result.success(LiveClient(applicationContext, cameraId, NO_LISTENER).control(fields)) } catch (error: Exception) { Result.failure(error) }
+            runOnUiThread {
+                pending -= cameraId
+                result.onSuccess { remoteState[cameraId] = it; remoteError -= cameraId }
+                result.onFailure { error ->
+                    remoteState[cameraId] = null
+                    remoteError[cameraId] = "Caméra injoignable : elle doit être en surveillance."
+                    if (!quiet) Toast.makeText(this, error.message ?: "Caméra injoignable", Toast.LENGTH_LONG).show()
+                }
+                if (!isDestroyed) refresh()
+            }
+        }.start()
+    }
+
+    /** Sous la carte : détection du son à distance et sirène de la caméra. */
+    private fun addRemoteControls(card: LinearLayout, camera: PairingCode) {
+        val dp = { value: Int -> LynxUi.dp(this, value) }
+        val state = remoteState[camera.id]
+        val busy = camera.id in pending
+        card.addView(View(this).apply { setBackgroundColor(LynxUi.OUTLINE) }, LinearLayout.LayoutParams(-1, 1).apply { leftMargin = dp(16); rightMargin = dp(16) })
+
+        val soundOn = state?.get("sound") == "1"
+        val soundRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(12), dp(12), dp(12))
+            background = LynxUi.pressable(this@ViewerActivity, 0x00000000, 20)
+            contentDescription = "Détection du son sur la caméra"
+            setOnClickListener {
+                if (state == null) fetchState(camera.id)
+                else sendControl(camera.id, mapOf("op" to "sound", "value" to if (soundOn) "0" else "1"))
+            }
+        }
+        soundRow.addView(LynxUi.icon(this, R.drawable.ic_mic, if (soundOn) LynxUi.ACCENT else LynxUi.MUTED, 22))
+        soundRow.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0)
+            addView(TextView(this@ViewerActivity).apply { text = "Détection du son"; textSize = 14.5f; setTextColor(LynxUi.TEXT) })
+            addView(LynxUi.body(this@ViewerActivity, when {
+                busy -> "Interrogation de la caméra…"
+                state == null -> remoteError[camera.id]?.let { "$it Toucher pour réessayer." } ?: "État inconnu · toucher pour interroger"
+                soundOn -> "Activée : un bruit déclenche aussi un clip"
+                else -> "Désactivée : seul le mouvement déclenche un clip"
+            }, 12.5f))
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (state != null) soundRow.addView(SwitchCompat(this).apply { isChecked = soundOn; isClickable = false; isFocusable = false })
+        card.addView(soundRow)
+
+        val alarmOn = state?.get("alarm") == "1"
+        card.addView(LynxUi.button(this, if (alarmOn) "Arrêter l’alarme" else "Déclencher l’alarme sur la caméra",
+            if (alarmOn) LynxUi.ACCENT_STRONG else LynxUi.DANGER, R.drawable.ic_bell) {
+            if (alarmOn) sendControl(camera.id, mapOf("op" to "alarm", "value" to "0"))
+            else confirmAlarm(camera)
+        }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), dp(14)) })
+    }
+
+    private fun confirmAlarm(camera: PairingCode) {
+        AlertDialog.Builder(this).setTitle("Déclencher l’alarme ?")
+            .setMessage("Une sirène stridente va retentir sur « ${camera.name} », volume au maximum, même en silencieux, pendant 2 minutes ou jusqu’à ce que tu l’arrêtes.")
+            .setPositiveButton("Déclencher") { _, _ -> sendControl(camera.id, mapOf("op" to "alarm", "value" to "1")) }
+            .setNegativeButton("Annuler", null).show()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -124,6 +198,7 @@ class ViewerActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             alertRow.addView(toggle)
             card.addView(alertRow)
+            addRemoteControls(card, camera)
             list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
     }
@@ -158,6 +233,14 @@ class ViewerActivity : ComponentActivity() {
         }
         box.addView(steps, LinearLayout.LayoutParams(-1, -2))
         return box
+    }
+
+    private companion object {
+        val NO_LISTENER = object : LiveClient.Listener {
+            override fun onState(text: String, connected: Boolean) {}
+            override fun onFrame(bitmap: android.graphics.Bitmap) = bitmap.recycle()
+            override fun onStatus(fields: Map<String, String>) {}
+        }
     }
 
     private fun addCamera(text: String) {

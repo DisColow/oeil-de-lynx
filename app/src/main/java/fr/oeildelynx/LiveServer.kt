@@ -41,7 +41,9 @@ internal class LiveServer(
     /** Vrai dès qu’au moins un spectateur veut le son : le micro du direct ne tourne que dans ce cas. */
     private val onAudioDemandChanged: (Boolean) -> Unit = {},
     /** Voix d’un spectateur à jouer sur le haut-parleur de la caméra (thread réseau). */
-    private val onTalk: (ByteArray) -> Unit = {}
+    private val onTalk: (ByteArray) -> Unit = {},
+    /** Commandes de la liste des caméras (sirène, détection du son) : renvoie l’état à jour. */
+    private val onControl: (Map<String, String>) -> Map<String, String> = { emptyMap() }
 ) {
     @Volatile private var audioDemand = false
 
@@ -280,6 +282,8 @@ internal class LiveServer(
                         }
                         channel.send(LiveProtocol.TYPE_END)
                     }
+                    "settings", "alarm", "sound" ->
+                        channel.send(LiveProtocol.TYPE_STATUS, LiveProtocol.encodeFields(onControl(request)).toByteArray(Charsets.UTF_8))
                     else -> channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
                 }
             }

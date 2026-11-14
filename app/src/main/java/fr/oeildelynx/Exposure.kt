@@ -19,6 +19,7 @@ internal object Exposure {
     private const val PREF_MAX = "exposure_max"
     private const val PREF_STEP = "exposure_step"
     private const val TAG = "LynxExposure"
+    private const val PREF_REPORT = "exposure_report"
     private const val MAX_ATTEMPTS = 20
     private const val RETRY_DELAY_MS = 300L
     private val handler = Handler(Looper.getMainLooper())
@@ -40,7 +41,9 @@ internal object Exposure {
     fun apply(context: Context, camera: Camera, onApplied: (Int) -> Unit = {}) {
         val state = camera.cameraInfo.exposureState
         if (!state.isExposureCompensationSupported) {
-            prefs(context).edit().putInt(PREF_MIN, 0).putInt(PREF_MAX, 0).apply(); return
+            prefs(context).edit().putInt(PREF_MIN, 0).putInt(PREF_MAX, 0)
+                .putString(PREF_REPORT, "La caméra de ce téléphone n’accepte pas de correction d’exposition (non prise en charge par Android/CameraX).").apply()
+            return
         }
         val bounds = state.exposureCompensationRange
         val index = prefs(context).getInt(PREF_INDEX, 0).coerceIn(bounds.lower, bounds.upper)
@@ -62,9 +65,16 @@ internal object Exposure {
                 false
             }
             if (applied) {
-                onApplied(camera.cameraInfo.exposureState.exposureCompensationIndex)
+                val actual = camera.cameraInfo.exposureState.exposureCompensationIndex
+                val step = camera.cameraInfo.exposureState.exposureCompensationStep.toFloat()
+                prefs(context).edit().putString(PREF_REPORT, "Caméra : ${label(actual, step)} appliqué.").apply()
+                Log.i(TAG, "Exposure index $actual applied")
+                onApplied(actual)
             } else if (attemptsLeft > 0 && prefs(context).getInt(PREF_INDEX, 0) == index) {
                 handler.postDelayed({ push(context, camera, index, attemptsLeft - 1, onApplied) }, RETRY_DELAY_MS)
+            } else if (attemptsLeft == 0) {
+                prefs(context).edit().putString(PREF_REPORT, "Caméra : réglage refusé après ${MAX_ATTEMPTS} essais.").apply()
+                onApplied(camera.cameraInfo.exposureState.exposureCompensationIndex)
             }
         }, ContextCompat.getMainExecutor(context))
     }
@@ -75,9 +85,13 @@ internal object Exposure {
         prefs(context).edit().putInt(PREF_INDEX, bounded).apply()
     }
 
+    /** Ce que la caméra a réellement fait du dernier réglage (affiché pour comprendre un échec). */
+    fun report(context: Context): String = prefs(context).getString(PREF_REPORT, null) ?: "Aucun réglage envoyé à la caméra pour l’instant."
+
     /** Champs envoyés aux spectateurs dans l’état du direct. */
     fun fields(context: Context): Map<String, String> = range(context).let {
-        mapOf("exp" to it.index.toString(), "expmin" to it.min.toString(), "expmax" to it.max.toString(), "expstep" to it.step.toString())
+        mapOf("exp" to it.index.toString(), "expmin" to it.min.toString(), "expmax" to it.max.toString(),
+            "expstep" to it.step.toString(), "expreport" to report(context))
     }
 
     fun label(index: Int, step: Float): String {
