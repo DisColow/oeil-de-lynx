@@ -46,6 +46,14 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
         root.addView(image, FrameLayout.LayoutParams(-1, -1))
+        // Toucher l’image : la caméra règle sa luminosité sur cette zone (comme l’appareil photo).
+        @Suppress("ClickableViewAccessibility")
+        image.setOnTouchListener { _, event -> if (event.actionMasked == android.view.MotionEvent.ACTION_UP) meterAt(event.x, event.y); true }
+        meterMarker = View(this).apply {
+            background = GradientDrawable().apply { setStroke(LynxUi.dp(this@LiveActivity, 2), LynxUi.WARNING); cornerRadius = LynxUi.dp(this@LiveActivity, 8).toFloat() }
+            visibility = View.GONE
+        }
+        root.addView(meterMarker, FrameLayout.LayoutParams(dp(64), dp(64)))
         // En attente de la première image : œil de la marque + état de la connexion.
         waitingText = LynxUi.body(this, "Connexion à ${camera.name}…", 14f).apply { gravity = Gravity.CENTER; setPadding(dp(32), dp(18), dp(32), 0) }
         waiting = LinearLayout(this).apply {
@@ -176,6 +184,28 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     private var exposureReport: TextView? = null
+    private lateinit var meterMarker: View
+
+    /** Point touché → coordonnées dans l’image de la caméra (rotation annulée) → commande « meter ». */
+    private fun meterAt(x: Float, y: Float) {
+        val drawable = image.drawable ?: return
+        if (lastStatus.isEmpty()) return
+        val dw = drawable.intrinsicWidth.toFloat(); val dh = drawable.intrinsicHeight.toFloat()
+        if (dw <= 0f || dh <= 0f) return
+        val scale = minOf(image.width / dw, image.height / dh)
+        val left = (image.width - dw * scale) / 2; val top = (image.height - dh * scale) / 2
+        val u = (x - left) / (dw * scale); val v = (y - top) / (dh * scale)
+        if (u !in 0f..1f || v !in 0f..1f) return
+        val (sx, sy) = MeteringZone.toSource(u, v, client?.lastFrameRotation ?: 0)
+        client?.sendRequest(mapOf("op" to "meter", "x" to sx.toString(), "y" to sy.toString()))
+        val size = LynxUi.dp(this, 64)
+        meterMarker.layoutParams = (meterMarker.layoutParams as FrameLayout.LayoutParams).apply { leftMargin = (x - size / 2).toInt(); topMargin = (y - size / 2).toInt() }
+        meterMarker.visibility = View.VISIBLE
+        meterMarker.alpha = 1f
+        meterMarker.animate().cancel()
+        meterMarker.animate().alpha(.35f).setStartDelay(1500).setDuration(600).start()
+        Toast.makeText(this, "Luminosité réglée sur cette zone · ☀ › Auto pour annuler", Toast.LENGTH_SHORT).show()
+    }
     private lateinit var alarmIcon: ImageView
     private lateinit var alarmLabel: TextView
 
@@ -253,7 +283,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(value); addView(seek); addView(report) }
         AlertDialog.Builder(this).setTitle("Exposition de la caméra").setView(content)
             .setOnDismissListener { exposureReport = null }
-            .setNeutralButton("Auto") { _, _ -> client?.sendRequest(mapOf("op" to "exposure", "value" to "0")) }
+            .setNeutralButton("Auto") { _, _ ->
+                // Tout automatique : correction à 0 et mesure de la lumière sur toute l’image.
+                client?.sendRequest(mapOf("op" to "exposure", "value" to "0"))
+                client?.sendRequest(mapOf("op" to "meter", "reset" to "1"))
+                meterMarker.visibility = View.GONE
+            }
             .setPositiveButton("OK", null).show()
     }
 
@@ -298,6 +333,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
         lastStatus = fields
+        if (fields["meter"] == "0" && ::meterMarker.isInitialized) meterMarker.visibility = View.GONE
         fields["expreport"]?.let { exposureReport?.text = it }
         val alarmOn = fields["alarm"] == "1"
         if (::alarmIcon.isInitialized) {
