@@ -87,18 +87,21 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
-        // Barre du bas : son, rotation de l’image, exposition de la caméra.
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+        // Bas de l’écran : bouton « Parler » (talkie-walkie), puis son, rotation et exposition.
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(16), dp(30), dp(16), dp(22))
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xe60b110e.toInt(), 0x990b110e.toInt(), 0x000b110e))
         }
+        panel.addView(talkButton(), LinearLayout.LayoutParams(-2, dp(54)).apply { bottomMargin = dp(18) })
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val sound = control(R.drawable.ic_volume, "Son") { setSound(!soundOn) }
         soundIcon = sound.second; soundLabel = sound.third
         bottom.addView(sound.first, LinearLayout.LayoutParams(0, -2, 1f))
         bottom.addView(control(R.drawable.ic_rotate, "Pivoter") { rotateImage() }.first, LinearLayout.LayoutParams(0, -2, 1f))
         bottom.addView(control(R.drawable.ic_sun, "Exposition") { showExposure() }.first, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        panel.addView(bottom, LinearLayout.LayoutParams(-1, -2))
+        root.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         setContentView(root)
 
         cameraKey = camera.id
@@ -108,6 +111,65 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         }
         soundOn = client?.audioEnabled == true
         renderSound()
+    }
+
+    private val micPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        Toast.makeText(this, if (granted) "Micro autorisé : maintiens « Parler » appuyé pour parler." else "Le micro est nécessaire pour parler à travers la caméra.", Toast.LENGTH_LONG).show()
+    }
+    private lateinit var talkLabel: TextView
+    private lateinit var talkPill: LinearLayout
+
+    /**
+     * Talkie-walkie : tant que le bouton est maintenu, la voix part vers le haut-parleur du téléphone
+     * caméra (volume au maximum là-bas). Relâcher arrête l’envoi.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun talkButton(): View {
+        talkLabel = TextView(this).apply {
+            text = "Maintenir pour parler"; textSize = 15f; setTextColor(LynxUi.ON_ACCENT)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        }
+        talkPill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(LynxUi.dp(this@LiveActivity, 20), 0, LynxUi.dp(this@LiveActivity, 24), 0)
+            background = LynxUi.rounded(this@LiveActivity, LynxUi.ACCENT, 27)
+            contentDescription = "Parler à travers la caméra (maintenir)"
+            addView(LynxUi.icon(this@LiveActivity, R.drawable.ic_mic, LynxUi.ON_ACCENT, 22).apply {
+                (layoutParams as LinearLayout.LayoutParams).rightMargin = LynxUi.dp(this@LiveActivity, 10)
+            })
+            addView(talkLabel)
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> startTalking()
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> stopTalking()
+                }
+                true
+            }
+        }
+        return talkPill
+    }
+
+    private fun startTalking() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(android.Manifest.permission.RECORD_AUDIO); return
+        }
+        if (client?.startTalking() != true) {
+            Toast.makeText(this, "Impossible de parler : direct non connecté ou micro occupé.", Toast.LENGTH_SHORT).show(); return
+        }
+        talkLabel.text = "Vous parlez… relâcher pour arrêter"
+        talkLabel.setTextColor(Color.WHITE)
+        talkPill.background = LynxUi.rounded(this, LynxUi.DANGER, 27)
+        (talkPill.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(Color.WHITE)
+    }
+
+    private fun stopTalking() {
+        client?.stopTalking()
+        if (!::talkLabel.isInitialized) return
+        talkLabel.text = "Maintenir pour parler"
+        talkLabel.setTextColor(LynxUi.ON_ACCENT)
+        talkPill.background = LynxUi.rounded(this, LynxUi.ACCENT, 27)
+        (talkPill.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(LynxUi.ON_ACCENT)
     }
 
     private val viewerPrefs by lazy { getSharedPreferences("lynx_viewer", MODE_PRIVATE) }
@@ -180,6 +242,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     override fun onStop() {
+        stopTalking()
         // Pas de flux en arrière-plan : économise la batterie et les données mobiles.
         client?.stop()
         super.onStop()

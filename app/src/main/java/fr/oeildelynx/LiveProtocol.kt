@@ -54,6 +54,8 @@ internal object LiveProtocol {
     const val TYPE_FILE_SIZE = 0x26 // caméra → spectateur : taille réelle du fichier, avant ses morceaux (1.9.5)
     // Depuis 1.9.0 : son du direct (G.711 µ-law, 16 kHz mono), envoyé aux spectateurs qui le demandent.
     const val TYPE_AUDIO = 0x14     // caméra → spectateur : échantillons µ-law
+    // Depuis 1.10.0 : le spectateur parle, sa voix sort du haut-parleur de la caméra.
+    const val TYPE_TALK = 0x15      // spectateur → caméra : échantillons µ-law
 
     const val AUDIO_SAMPLE_RATE = 16_000
 

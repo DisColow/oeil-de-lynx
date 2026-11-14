@@ -39,7 +39,9 @@ internal class LiveServer(
     private val onRequest: (Map<String, String>) -> Unit = {},
     private val gallery: LiveGallery? = null,
     /** Vrai dès qu’au moins un spectateur veut le son : le micro du direct ne tourne que dans ce cas. */
-    private val onAudioDemandChanged: (Boolean) -> Unit = {}
+    private val onAudioDemandChanged: (Boolean) -> Unit = {},
+    /** Voix d’un spectateur à jouer sur le haut-parleur de la caméra (thread réseau). */
+    private val onTalk: (ByteArray) -> Unit = {}
 ) {
     @Volatile private var audioDemand = false
 
@@ -229,6 +231,7 @@ internal class LiveServer(
             try {
                 while (true) {
                     val record = channel.receive()
+                    if (record.type == LiveProtocol.TYPE_TALK && !alertsOnly) { onTalk(record.payload); continue }
                     if (record.type == LiveProtocol.TYPE_REQUEST) {
                         val request = LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))
                         // Son activé ou coupé par ce spectateur : géré ici, propre à sa connexion.
