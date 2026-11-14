@@ -3,7 +3,6 @@ package fr.oeildelynx
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.SystemClock
 import android.util.Log
@@ -17,13 +16,12 @@ import java.util.concurrent.TimeUnit
  * Le volume de ce flux est poussé au maximum pendant la prise de parole, puis remis à sa valeur
  * d’origine 1,5 s après le dernier morceau reçu.
  */
-internal class TalkSpeaker(context: Context) {
-    private val audio = context.getSystemService(AudioManager::class.java)
+internal class TalkSpeaker(private val context: Context) {
     private val queue = LinkedBlockingDeque<ShortArray>()
     @Volatile private var running = true
     @Volatile private var lastChunkAt = 0L
     private var track: AudioTrack? = null
-    private var savedVolume: Int? = null
+    private var volumeRaised = false
 
     private val thread = Thread({
         while (running) {
@@ -48,13 +46,8 @@ internal class TalkSpeaker(context: Context) {
     fun release() { running = false; thread.interrupt() }
 
     private fun open(): AudioTrack? {
-        try {
-            // Volume au maximum, l’ancienne valeur est mémorisée pour être rétablie.
-            savedVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
-            audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
-        } catch (error: SecurityException) {
-            Log.w(TAG, "Cannot raise alarm volume", error)
-        }
+        // Volume au maximum, l’ancienne valeur est rétablie à la fin (partagé avec la sirène).
+        AlarmVolume.raise(context); volumeRaised = true
         val rate = LiveProtocol.AUDIO_SAMPLE_RATE
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         track = try {
@@ -83,9 +76,9 @@ internal class TalkSpeaker(context: Context) {
     }
 
     private fun restoreVolume() {
-        val volume = savedVolume ?: return
-        savedVolume = null
-        try { audio.setStreamVolume(AudioManager.STREAM_ALARM, volume, 0) } catch (_: SecurityException) { }
+        if (!volumeRaised) return
+        volumeRaised = false
+        AlarmVolume.release(context)
     }
 
     companion object {

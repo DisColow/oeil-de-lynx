@@ -38,3 +38,13 @@ class MuLawTest {
         assertEquals(0, MuLaw.decode(0xff.toByte()).toInt())
     }
 }
+
+class AlarmSirenTest {
+    @Test fun toneIsLoudAndHasExpectedLength() {
+        val samples = AlarmSiren.tone(44_100, 960.0, 0.25)
+        assertEquals(11_025, samples.size)
+        // Sinus écrêté : la plupart des échantillons sont au niveau maximal (son perçant).
+        val loud = samples.count { kotlin.math.abs(it.toInt()) >= 32000 }
+        org.junit.Assert.assertTrue(loud > samples.size / 2)
+    }
+}

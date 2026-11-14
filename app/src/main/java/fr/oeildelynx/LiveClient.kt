@@ -173,7 +173,9 @@ internal class LiveClient(
             channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(fields).toByteArray(Charsets.UTF_8))
             val record = channel.receive()
             // Une caméra en version antérieure à 1.7.0 envoie le direct au lieu de répondre.
-            if (record.type == LiveProtocol.TYPE_FRAME || record.type == LiveProtocol.TYPE_STATUS || record.type == LiveProtocol.TYPE_KEEPALIVE) {
+            val controlOp = fields["op"] in setOf("settings", "alarm", "sound")
+            if (record.type == LiveProtocol.TYPE_FRAME || record.type == LiveProtocol.TYPE_KEEPALIVE ||
+                (record.type == LiveProtocol.TYPE_STATUS && !controlOp)) {
                 throw IOException("Mets à jour Œil de Lynx sur le téléphone caméra pour accéder à sa galerie.")
             }
             return record
@@ -195,6 +197,18 @@ internal class LiveClient(
         }
 
         override fun close() { try { socket.close() } catch (_: IOException) { } }
+    }
+
+    /**
+     * Commande ponctuelle (sirène, détection du son, lecture de l’état) par une connexion courte.
+     * Bloquant : à appeler hors du thread principal. Renvoie l’état de la caméra après la commande.
+     */
+    fun control(fields: Map<String, String>): Map<String, String> {
+        openGallery().use { session ->
+            val reply = session.request(fields)
+            if (reply.type != LiveProtocol.TYPE_STATUS) throw IOException("Mets à jour Œil de Lynx sur le téléphone caméra (1.11.0 ou plus).")
+            return LiveProtocol.decodeFields(String(reply.payload, Charsets.UTF_8))
+        }
     }
 
     fun openGallery(): GallerySession {

@@ -401,8 +401,10 @@ class MainActivity : ComponentActivity() {
             LynxUi.SheetItem(R.drawable.ic_motion, "Sensibilité au mouvement", MonitorService.motionSensitivity(this).label) { showSensitivity() },
             LynxUi.SheetItem(R.drawable.ic_mic, "Déclencher aussi sur le son", if (soundOn) "Oui" else "Non · mouvement seulement") {
                 prefs.edit().putBoolean(MonitorService.PREF_SOUND_TRIGGER, !soundOn).apply()
-                val change = if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip."
-                toast(change + if (surveillance) " Appliqué au prochain démarrage de la surveillance." else "")
+                // Pendant la surveillance, appliqué tout de suite par le service.
+                if (surveillance) startService(Intent(this, MonitorService::class.java)
+                    .setAction(MonitorService.ACTION_SET_SOUND).putExtra(MonitorService.EXTRA_SOUND, !soundOn))
+                toast(if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip.")
             },
             LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", "${durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes"} · découpe les mouvements très longs") { showRules() },
             LynxUi.SheetItem(R.drawable.ic_qr, "Appairer un téléphone spectateur", "QR code pour le direct et les alertes") { startActivity(Intent(this, PairingActivity::class.java)) },
@@ -434,6 +436,14 @@ class MainActivity : ComponentActivity() {
             addView(TextView(this@MainActivity).apply {
                 text = "Vers la gauche : image plus sombre. Vers la droite : plus claire (utile la nuit)."
                 textSize = 12f; setPadding(0, dp(8), 0, 0)
+            })
+            // Retour de la caméra : valeur réellement appliquée ou raison du refus, relu régulièrement.
+            addView(LynxUi.body(this@MainActivity, Exposure.report(this@MainActivity), 12.5f, LynxUi.ACCENT).apply {
+                setPadding(0, dp(10), 0, 0)
+                val refresh = object : Runnable {
+                    override fun run() { text = Exposure.report(this@MainActivity); if (isAttachedToWindow) postDelayed(this, 500) }
+                }
+                post(refresh)
             })
         }
         AlertDialog.Builder(this).setTitle("Exposition").setView(content)
