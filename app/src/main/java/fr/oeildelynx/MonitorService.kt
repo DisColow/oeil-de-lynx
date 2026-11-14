@@ -59,6 +59,8 @@ class MonitorService : LifecycleService() {
     @Volatile private var deviceRotation = android.view.Surface.ROTATION_0
     @Volatile private var recordingReason = ""
     private var liveAudio: AudioRecord? = null
+    // Haut-parleur de la voix des spectateurs, créé au premier « Parler ».
+    @Volatile private var talkSpeaker: TalkSpeaker? = null
     @Volatile private var startingRecording = false
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
@@ -395,6 +397,7 @@ class MonitorService : LifecycleService() {
                     }
                 },
                 gallery = CaptureLibrary(applicationContext),
+                onTalk = { chunk -> (talkSpeaker ?: TalkSpeaker(applicationContext).also { talkSpeaker = it }).play(chunk) },
                 onAudioDemandChanged = { demand ->
                     ContextCompat.getMainExecutor(this).execute { if (demand && !shuttingDown) startLiveAudio() else stopLiveAudio() }
                 },
@@ -455,6 +458,7 @@ class MonitorService : LifecycleService() {
 
     private fun stopLive() {
         stopLiveAudio()
+        talkSpeaker?.release(); talkSpeaker = null
         val server = liveServer ?: return
         liveServer = null
         server.stop(sayGoodbye = true)

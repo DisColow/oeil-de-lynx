@@ -119,6 +119,46 @@ internal class LiveClient(
     }
     @Volatile private var activeChannel: SecureChannel? = null
 
+    @Volatile private var talkRecord: android.media.AudioRecord? = null
+
+    /** Vrai pendant que l’utilisateur parle vers la caméra. */
+    val isTalking get() = talkRecord != null
+
+    /**
+     * Micro du spectateur vers le haut-parleur de la caméra (bouton « Parler » maintenu).
+     * Le son reçu de la caméra est coupé pendant ce temps : sinon on s’entendrait en écho.
+     * Renvoie faux si le direct n’est pas connecté ou si le micro est indisponible.
+     */
+    @android.annotation.SuppressLint("MissingPermission") // vérifiée par l’écran du direct avant l’appel
+    fun startTalking(): Boolean {
+        if (talkRecord != null) return true
+        val channel = activeChannel ?: return false
+        val rate = LiveProtocol.AUDIO_SAMPLE_RATE
+        val min = android.media.AudioRecord.getMinBufferSize(rate, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
+        if (min <= 0) return false
+        val rec = try {
+            android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate,
+                android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 4096))
+        } catch (_: Exception) { return false }
+        if (rec.state != android.media.AudioRecord.STATE_INITIALIZED) { rec.release(); return false }
+        try { rec.startRecording() } catch (_: Exception) { rec.release(); return false }
+        talkRecord = rec
+        player?.flush()
+        Thread({
+            val samples = ShortArray(640) // 40 ms : faible latence
+            while (talkRecord === rec) {
+                val n = try { rec.read(samples, 0, samples.size) } catch (_: Exception) { -1 }
+                if (n < 0) break
+                if (n > 0) try { channel.send(LiveProtocol.TYPE_TALK, MuLaw.encode(samples, n)) } catch (_: IOException) { break }
+            }
+            try { rec.stop() } catch (_: Exception) { }
+            rec.release()
+        }, "lynx-talk-mic").start()
+        return true
+    }
+
+    fun stopTalking() { talkRecord = null }
+
     /** Envoie une commande à la caméra (ex. exposition) si la connexion est ouverte. */
     fun sendRequest(fields: Map<String, String>) {
         val channel = activeChannel ?: return
@@ -186,6 +226,7 @@ internal class LiveClient(
     }
 
     fun stop() {
+        stopTalking()
         player?.release(); player = null
         session?.set(false)
         session = null
@@ -260,7 +301,7 @@ internal class LiveClient(
                         frameCount = 0; windowStart = now
                     }
                 }
-                LiveProtocol.TYPE_AUDIO -> if (audioEnabled && flag.get()) {
+                LiveProtocol.TYPE_AUDIO -> if (audioEnabled && flag.get() && talkRecord == null) {
                     val out = player ?: AudioPlayer().also { player = it }
                     out.play(MuLaw.decode(record.payload))
                 }
