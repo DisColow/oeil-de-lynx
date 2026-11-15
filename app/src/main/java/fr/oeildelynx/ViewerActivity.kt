@@ -125,12 +125,38 @@ class ViewerActivity : ComponentActivity() {
         if (state != null) soundRow.addView(SwitchCompat(this).apply { isChecked = soundOn; isClickable = false; isFocusable = false })
         card.addView(soundRow)
 
+        // Veille : caméra et micro coupés pour économiser la batterie, reprise à distance.
+        if (state != null) {
+            val asleep = state["standby"] == "1"
+            val why = when (state["standbywhy"]) { MonitorService.REASON_BATTERY -> "batterie faible"; MonitorService.REASON_REMOTE -> "depuis un spectateur"; else -> "sur la caméra" }
+            val threshold = state["thr"]?.toIntOrNull() ?: MonitorService.DEFAULT_STANDBY_THRESHOLD
+            card.addView(LynxUi.row(this, R.drawable.ic_battery,
+                if (asleep) "Surveillance en veille ($why)" else "Surveillance active",
+                if (asleep) "Toucher pour reprendre la surveillance" else "Toucher pour mettre en veille et économiser la batterie", chevron = false) {
+                sendControl(camera.id, mapOf("op" to "standby", "value" to if (asleep) "0" else "1"))
+            })
+            card.addView(LynxUi.row(this, R.drawable.ic_timer, "Veille automatique",
+                if (threshold == 0) "Désactivée" else "Sous $threshold % de batterie, reprise au branchement") {
+                chooseThreshold(camera, threshold)
+            })
+        }
+
         val alarmOn = state?.get("alarm") == "1"
         card.addView(LynxUi.button(this, if (alarmOn) "Arrêter l’alarme" else "Déclencher l’alarme sur la caméra",
             if (alarmOn) LynxUi.ACCENT_STRONG else LynxUi.DANGER, R.drawable.ic_bell) {
             if (alarmOn) sendControl(camera.id, mapOf("op" to "alarm", "value" to "0"))
             else confirmAlarm(camera)
         }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), dp(14)) })
+    }
+
+    private fun chooseThreshold(camera: PairingCode, current: Int) {
+        val values = intArrayOf(0, 15, 20, 30, 40)
+        val labels = arrayOf("Désactivée", "Sous 15 %", "Sous 20 % (recommandé)", "Sous 30 %", "Sous 40 %")
+        AlertDialog.Builder(this).setTitle("Veille automatique de ${camera.name}")
+            .setSingleChoiceItems(labels, values.indexOf(current).coerceAtLeast(0)) { dialog, which ->
+                dialog.dismiss()
+                sendControl(camera.id, mapOf("op" to "threshold", "value" to values[which].toString()))
+            }.setNegativeButton("Fermer", null).show()
     }
 
     private fun confirmAlarm(camera: PairingCode) {

@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.13.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.14.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.13.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.14.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -17,6 +17,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Notification Android en priorité haute (bannière et son) sur le téléphone caméra à chaque détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature (image prise à ~1 s du début, chargée en arrière-plan), début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
+- **Veille** : la surveillance peut être mise en veille (caméra, analyse et micro coupés) et reprise à distance depuis le spectateur, ou depuis la caméra ; mise en veille automatique sous 20 % de batterie hors charge, reprise automatique au branchement.
 - **Batterie de la caméra** visible sur le téléphone spectateur : pourcentage, en charge ou non, dans le direct et sous chaque caméra de la liste (vert, orange sous 50 %, rouge sous 20 %).
 - **Lumière sur une zone** : dans le direct, toucher une zone de l’image règle la luminosité de la caméra sur cette zone (lampe, fenêtre, coin sombre), comme dans l’appareil photo.
 - **Alarme à distance** : depuis le téléphone spectateur (liste des caméras ou direct), une sirène stridente retentit sur le téléphone caméra, volume au maximum, même en silencieux.
@@ -75,6 +76,7 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 - **Son** : le téléphone caméra ouvre son micro uniquement quand un spectateur écoute, et l’envoie en G.711 µ-law 16 kHz (≈ 128 kbit/s, en plus des 2 à 3 Mbit/s de l’image), chiffré comme le reste. Le bouton **Son** du direct le coupe ou le rétablit ; le choix est mémorisé par caméra. Au lancement d’un clip, le micro du direct est suspendu un instant pour laisser CameraX ouvrir la piste audio du clip, puis rouvert. *À vérifier sur chaque téléphone : certains Android peuvent rendre muet l’un des deux usages simultanés du micro ; la piste du clip reste prioritaire.*
 - **Alarme** : bouton « Déclencher l’alarme sur la caméra » sous chaque caméra de la liste, ou bouton « Alarme » du direct (avec confirmation). Sirène à deux tons alternés sur le flux alarme, volume au maximum (rétabli ensuite) et vibration ; elle s’arrête depuis le spectateur, depuis la notification du téléphone caméra (« Arrêter l’alarme »), ou seule après 2 minutes.
 - **Détection du son à distance** : interrupteur « Détection du son » sous chaque caméra ; appliqué tout de suite par le téléphone caméra (aussi depuis ses propres Réglages, sans redémarrer la surveillance). La liste interroge la caméra à l’ouverture ; elle doit être en surveillance pour répondre.
+- **Veille** : sous chaque caméra de la liste, « Surveillance active / en veille » (toucher pour basculer) et « Veille automatique » (désactivée, 15, 20 — par défaut —, 30 ou 40 %). En veille, la caméra, l’analyse d’images, le micro et l’enregistrement sont coupés ; seule une connexion légère reste ouverte pour recevoir l’ordre de reprendre et envoyer l’état (batterie, veille). Le direct affiche « Caméra en veille » avec un bouton « Reprendre la surveillance ». Sur le téléphone caméra : Réglages › Mettre en veille / Reprendre, Réglages › Veille automatique, et bouton « Reprendre la surveillance » dans la notification. Sous le seuil et hors charge, la caméra se met seule en veille (après la fin d’un clip en cours) et les spectateurs avec alertes reçoivent une notification ; elle reprend seule dès qu’elle est branchée. Une reprise manuelle sous le seuil n’est pas annulée avant la prochaine charge. Un nouveau démarrage depuis le téléphone caméra repart toujours en surveillance active. En veille, plus aucune détection ni aucun clip.
 - **Lumière sur une zone** : toucher l’image du direct envoie la zone à la caméra, qui y mesure la lumière (région d’exposition automatique CameraX) : toucher une lampe ou une fenêtre évite qu’elle soit « brûlée », toucher un coin sombre l’éclaircit. La zone est mémorisée sur la caméra et réappliquée à chaque démarrage, clips compris. ☀ › Auto revient en automatique sur toute l’image. Le compte rendu de la fenêtre ☀ indique si la caméra l’a acceptée.
 - **Exposition — diagnostic** : la fenêtre Exposition (caméra et spectateur) affiche ce que la caméra a réellement fait du réglage : valeur appliquée, refus, ou correction non prise en charge par ce téléphone.
 - **Parler** : maintenir le bouton « Maintenir pour parler » du direct (autorisation du micro demandée la première fois). La voix part en µ-law 16 kHz par la connexion chiffrée et sort du haut-parleur du téléphone caméra sur le flux « alarme », audible même en mode silencieux ou vibreur ; son volume est poussé au maximum pendant la prise de parole puis rétabli 1,5 s après. Pendant qu’on parle, le son venant de la caméra est coupé chez le spectateur pour éviter l’écho. La voix peut être captée dans un clip en cours d’enregistrement.
@@ -205,11 +207,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.13.1
-git push origin v1.13.1
+git tag v1.14.0
+git push origin v1.14.0
 ```
 
-Remplacer `1.13.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.14.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
