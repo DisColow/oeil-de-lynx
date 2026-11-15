@@ -180,6 +180,38 @@ internal object LynxUi {
         return chip to (dot to label)
     }
 
+    /** Couleur du niveau de batterie : vert, orange sous 50 %, rouge sous 20 % (sauf en charge). */
+    fun batteryColor(percent: Int, charging: Boolean) = when {
+        charging || percent >= 50 -> ACCENT
+        percent >= 20 -> WARNING
+        else -> DANGER
+    }
+
+    /** Pastille batterie : icône colorée, pourcentage, éclair si en charge. Renvoie la vue et sa mise à jour. */
+    fun batteryChip(context: Context): Pair<LinearLayout, (Int, Boolean) -> Unit> {
+        val icon = icon(context, R.drawable.ic_battery, ACCENT, 18)
+        val label = TextView(context).apply {
+            textSize = 12f; setTextColor(TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setPadding(dp(context, 5), 0, 0, 0)
+        }
+        val bolt = icon(context, R.drawable.ic_bolt, WARNING, 13)
+        val chip = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(context, 9), dp(context, 6), dp(context, 10), dp(context, 6))
+            background = rounded(context, 0x99101713.toInt(), 16); visibility = View.GONE
+            addView(icon); addView(label); addView(bolt)
+        }
+        val update: (Int, Boolean) -> Unit = { percent, charging ->
+            chip.visibility = if (percent in 0..100) View.VISIBLE else View.GONE
+            val color = batteryColor(percent, charging)
+            icon.imageTintList = ColorStateList.valueOf(color)
+            label.text = "$percent %"
+            bolt.visibility = if (charging) View.VISIBLE else View.GONE
+            chip.contentDescription = "Batterie de la caméra : $percent %" + if (charging) ", en charge" else ""
+        }
+        return chip to update
+    }
+
     class SheetItem(@DrawableRes val icon: Int, val title: String, val subtitle: String? = null, val danger: Boolean = false, val action: () -> Unit)
 
     /** Feuille de menu ancrée en bas de l’écran, dans le style de l’application. */

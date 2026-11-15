@@ -172,6 +172,13 @@ class ViewerActivity : ComponentActivity() {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(4), 0)
                 addView(LynxUi.title(this@ViewerActivity, camera.name, 18f).apply { maxLines = 1 })
                 addView(LynxUi.body(this@ViewerActivity, "Toucher pour voir le direct", 13f).apply { setPadding(0, dp(2), 0, 0) })
+                // Batterie de la caméra, connue dès que la caméra a répondu (en surveillance).
+                val state = remoteState[camera.id]
+                state?.get("bat")?.toIntOrNull()?.let { percent ->
+                    val (chip, update) = LynxUi.batteryChip(this@ViewerActivity)
+                    update(percent, state["chg"] == "1")
+                    addView(chip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+                }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(LynxUi.iconButton(this, R.drawable.ic_more, "Gérer ${camera.name}", 0x00000000, 40) { manage(camera) }.apply {
                 imageTintList = ColorStateList.valueOf(LynxUi.MUTED)
