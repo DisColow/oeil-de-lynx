@@ -258,10 +258,12 @@ class MonitorService : LifecycleService() {
         try {
             // Le direct n’encode des JPEG que si un spectateur est connecté, à cadence limitée.
             val server = liveServer
-            if (server != null && server.hasViewers() && now - lastLiveFrameAt >= LIVE_FRAME_INTERVAL_MS) {
+            // Mouvement en cours : clip en enregistrement ou mouvement détecté il y a moins de 3 s.
+            val motionActive = recording != null || (lastMotionAt > 0 && now - lastMotionAt < MOTION_LIVE_WINDOW_MS)
+            if (server != null && server.wantsFrame(motionActive) && now - lastLiveFrameAt >= LIVE_FRAME_INTERVAL_MS) {
                 lastLiveFrameAt = now
                 try {
-                    liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees) }
+                    liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees, motionActive) }
                 } catch (error: Exception) { Log.w(TAG, "Live frame encoding failed", error) }
             }
             // Analyse au plus une image toutes les 500 ms pour limiter le processeur.
@@ -809,6 +811,7 @@ class MonitorService : LifecycleService() {
         // Direct : environ 8 images/s en JPEG qualité 60, soit ~2 à 3 Mbit/s en 640 × 480.
         private const val LIVE_FRAME_INTERVAL_MS = 120L
         private const val LIVE_JPEG_QUALITY = 60
+        private const val MOTION_LIVE_WINDOW_MS = 3_000L
         // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.
     }
 }

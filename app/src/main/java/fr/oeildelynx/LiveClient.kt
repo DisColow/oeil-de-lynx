@@ -84,6 +84,10 @@ internal class LiveClient(
         }
     @Volatile private var player: AudioPlayer? = null
 
+    /** Direct « sur mouvement » : la caméra n’envoie d’images que pendant un mouvement. */
+    @Volatile var motionOnly = false
+        set(value) { field = value; sendRequest(mapOf("op" to "motiononly", "value" to if (value) "1" else "0")) }
+
     /**
      * Lecture du son sur son propre thread : l’écriture dans AudioTrack bloque, elle ne doit pas
      * retarder la réception des images. File courte : en cas de retard, les morceaux anciens sont jetés.
@@ -389,7 +393,8 @@ internal class LiveClient(
                 BufferedInputStream(socket.getInputStream(), 64 * 1024), BufferedOutputStream(socket.getOutputStream()), camera.key
             )
             // À partir d’ici, la caméra a répondu : une fermeture immédiate signifie qu’elle refuse notre clé.
-            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode, "audio" to if (audioEnabled && mode == "live") "1" else "0"))
+            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode, "audio" to if (audioEnabled && mode == "live") "1" else "0",
+                "motiononly" to if (motionOnly) "1" else "0"))
             channel.send(LiveProtocol.TYPE_AUTH, auth.toByteArray(Charsets.UTF_8))
             val hello = try { channel.receive() } catch (error: EOFException) { throw KeyRejected() } catch (error: java.net.SocketException) { throw KeyRejected() }
             if (hello.type != LiveProtocol.TYPE_HELLO) throw IOException("Réponse inattendue de la caméra")
