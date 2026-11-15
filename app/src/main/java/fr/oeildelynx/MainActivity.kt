@@ -111,6 +111,9 @@ class MainActivity : ComponentActivity() {
         ContextCompat.registerReceiver(
             this, liveViewersReceiver, IntentFilter(MonitorService.ACTION_LIVE_VIEWERS_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        ContextCompat.registerReceiver(
+            this, standbyReceiver, IntentFilter(MonitorService.ACTION_STANDBY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         monitorReceiverRegistered = true
         if (surveillance) {
             // Rattache la nouvelle surface d’aperçu au service déjà actif après recréation de l’Activity.
@@ -142,8 +145,9 @@ class MainActivity : ComponentActivity() {
             setImageResource(R.drawable.ic_eye_off); imageTintList = ColorStateList.valueOf(LynxUi.ACCENT)
             val pad = dp(22); setPadding(pad, pad, pad, pad); background = LynxUi.circle(0xff17261d.toInt())
         }, LinearLayout.LayoutParams(dp(84), dp(84)))
-        mask.addView(LynxUi.title(this, "Aperçu masqué", 21f).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)) })
-        mask.addView(LynxUi.body(this, "La surveillance continue : mouvements détectés\net clips enregistrés comme d’habitude.").apply { gravity = Gravity.CENTER })
+        maskTitle = LynxUi.title(this, MASK_TITLE, 21f).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)) }
+        maskInfo = LynxUi.body(this, MASK_INFO).apply { gravity = Gravity.CENTER; setPadding(dp(24), 0, dp(24), 0) }
+        mask.addView(maskTitle); mask.addView(maskInfo)
         root.addView(mask, FrameLayout.LayoutParams(-1, -1))
 
         // Barre du haut : marque, état, menu.
@@ -334,6 +338,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startMonitoring() {
+        // Un démarrage manuel repart toujours en surveillance active (pas en veille).
+        prefs.edit().putBoolean(MonitorService.PREF_STANDBY, false).remove(MonitorService.PREF_STANDBY_REASON).apply()
         if (!androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()) {
             toast("Les notifications d’Œil de Lynx sont désactivées : active-les dans les réglages Android pour être prévenu des mouvements.")
         }
@@ -355,8 +361,36 @@ class MainActivity : ComponentActivity() {
         surveillance = true; setPreviewVisible(true, hideDelayMs = STARTUP_PREVIEW_TIMEOUT_MS); syncControls(); showRecordingState()
     }
 
+    private lateinit var maskTitle: TextView
+    private lateinit var maskInfo: TextView
+    private var shownStandby = false
+    private val standbyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = syncControls()
+    }
+
+    private fun inStandby() = surveillance && prefs.getBoolean(MonitorService.PREF_STANDBY, false)
+
+    /** Veille : caméra coupée, le masque explique pourquoi ; à la sortie, l’aperçu revient. */
+    private fun syncStandby() {
+        val standby = inStandby()
+        if (standby == shownStandby) return
+        shownStandby = standby
+        if (standby) {
+            handler.removeCallbacks(autoHide)
+            maskTitle.text = "Surveillance en veille"
+            maskInfo.text = if (prefs.getString(MonitorService.PREF_STANDBY_REASON, "") == MonitorService.REASON_BATTERY)
+                "Batterie faible : caméra et micro coupés pour économiser l’énergie. Reprise automatique dès que le téléphone est branché."
+                else "Caméra et micro coupés pour économiser la batterie. Reprise : Réglages › Reprendre la surveillance, ou depuis le téléphone spectateur."
+            mask.visibility = View.VISIBLE
+        } else {
+            maskTitle.text = MASK_TITLE; maskInfo.text = MASK_INFO
+            if (surveillance) setPreviewVisible(true) else mask.visibility = View.GONE
+        }
+    }
+
     private fun syncControls() {
         if (!::recordButtonIcon.isInitialized) return
+        syncStandby()
         recordButtonIcon.setImageResource(if (surveillance) R.drawable.ic_stop else R.drawable.ic_play)
         recordButtonIcon.imageTintList = ColorStateList.valueOf(if (surveillance) Color.WHITE else LynxUi.ON_ACCENT)
         recordInner.background = LynxUi.circle(if (surveillance) LynxUi.DANGER else LynxUi.ACCENT)
@@ -364,7 +398,7 @@ class MainActivity : ComponentActivity() {
         recordButtonLabel.text = if (surveillance) "Arrêter" else "Démarrer"
         previewControl.isEnabled = surveillance
         // Hors surveillance l’aperçu est toujours visible : la pastille n’a pas d’usage.
-        previewControl.visibility = if (surveillance) View.VISIBLE else View.INVISIBLE
+        previewControl.visibility = if (surveillance && !inStandby()) View.VISIBLE else View.INVISIBLE
         if (!surveillance) {
             maskButtonIcon.setImageResource(R.drawable.ic_camera)
             maskButtonIcon.contentDescription = "Caméra visible"
@@ -373,11 +407,13 @@ class MainActivity : ComponentActivity() {
         recBadge.visibility = if (surveillance) View.VISIBLE else View.GONE
         if (!surveillance) liveViewers = 0
         if (::statusLabel.isInitialized) statusLabel.text = when {
+            inStandby() -> "EN VEILLE"
             surveillance && liveViewers > 0 -> "EN DIRECT · $liveViewers"
             surveillance -> "SURVEILLANCE"
             else -> "PRÊT"
         }
         if (::statusDot.isInitialized) statusDot.background = LynxUi.circle(when {
+            inStandby() -> LynxUi.MUTED
             surveillance && liveViewers > 0 -> LynxUi.WARNING
             surveillance -> LynxUi.DANGER
             else -> LynxUi.ACCENT
@@ -406,11 +442,21 @@ class MainActivity : ComponentActivity() {
                     .setAction(MonitorService.ACTION_SET_SOUND).putExtra(MonitorService.EXTRA_SOUND, !soundOn))
                 toast(if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip.")
             },
+            LynxUi.SheetItem(R.drawable.ic_battery, "Veille automatique (batterie)",
+                prefs.getInt(MonitorService.PREF_STANDBY_THRESHOLD, MonitorService.DEFAULT_STANDBY_THRESHOLD).let { if (it == 0) "Désactivée" else "Sous $it %, reprise au branchement" }) { showStandbyThreshold() },
             LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", "${durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes"} · découpe les mouvements très longs") { showRules() },
             LynxUi.SheetItem(R.drawable.ic_qr, "Appairer un téléphone spectateur", "QR code pour le direct et les alertes") { startActivity(Intent(this, PairingActivity::class.java)) },
             LynxUi.SheetItem(R.drawable.ic_eye, "Regarder une caméra", "Ce téléphone devient spectateur") { startActivity(Intent(this, ViewerActivity::class.java)) }
         )
-        LynxUi.sheet(this, "Réglages", items, sections = mapOf(0 to "Caméra et détection", 4 to "Direct entre téléphones"))
+        val withStandby = if (surveillance) listOf(LynxUi.SheetItem(R.drawable.ic_battery,
+            if (inStandby()) "Reprendre la surveillance" else "Mettre en veille",
+            if (inStandby()) "Rallume la caméra et la détection" else "Coupe caméra et micro pour économiser la batterie") {
+            startService(Intent(this, MonitorService::class.java).setAction(MonitorService.ACTION_STANDBY).putExtra(MonitorService.EXTRA_STANDBY, !inStandby()))
+        }) + items else items
+        val offset = withStandby.size - items.size
+        val sections = mutableMapOf(offset to "Caméra et détection", offset + 5 to "Direct entre téléphones")
+        if (offset > 0) sections[0] = "Surveillance"
+        LynxUi.sheet(this, "Réglages", withStandby, sections = sections)
     }
 
     /** Curseur de correction d’exposition, appliqué en direct à l’aperçu ou à la surveillance. */
@@ -472,6 +518,18 @@ class MainActivity : ComponentActivity() {
             }.setNegativeButton("Fermer", null).show()
     }
 
+    /** Seuil de batterie sous lequel la surveillance se met seule en veille (hors charge). */
+    private fun showStandbyThreshold() {
+        val values = intArrayOf(0, 15, 20, 30, 40)
+        val labels = arrayOf("Désactivée", "Sous 15 %", "Sous 20 % (recommandé)", "Sous 30 %", "Sous 40 %")
+        val current = values.indexOf(prefs.getInt(MonitorService.PREF_STANDBY_THRESHOLD, MonitorService.DEFAULT_STANDBY_THRESHOLD)).coerceAtLeast(0)
+        AlertDialog.Builder(this).setTitle("Veille automatique")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                prefs.edit().putInt(MonitorService.PREF_STANDBY_THRESHOLD, values[which]).apply()
+                dialog.dismiss()
+            }.setNegativeButton("Fermer", null).show()
+    }
+
     private fun showRules() {
         // Enregistre la durée en millisecondes ; le service relit cette limite pendant chaque clip.
         val durations = intArrayOf(30_000, 90_000, 180_000, 300_000, 600_000)
@@ -523,12 +581,15 @@ class MainActivity : ComponentActivity() {
         if (monitorReceiverRegistered) {
             unregisterReceiver(monitorStateReceiver)
             unregisterReceiver(liveViewersReceiver)
+            unregisterReceiver(standbyReceiver)
         }
         super.onDestroy()
     }
 
     companion object {
         // Après Démarrer, l’aperçu initial reste visible moins longtemps qu’un aperçu réactivé manuellement.
+        private const val MASK_TITLE = "Aperçu masqué"
+        private const val MASK_INFO = "La surveillance continue : mouvements détectés\net clips enregistrés comme d’habitude."
         private const val STARTUP_PREVIEW_TIMEOUT_MS = 60_000L
         private const val PREVIEW_TIMEOUT_MS = 90_000L
     }

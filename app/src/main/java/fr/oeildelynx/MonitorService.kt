@@ -88,6 +88,10 @@ class MonitorService : LifecycleService() {
         val preferences = getSharedPreferences("lynx", Context.MODE_PRIVATE)
         maxClipMs = preferences.getInt("max_clip_ms", 600_000).toLong()
         useFrontCamera = preferences.getBoolean("front_camera", false)
+        // Une veille en cours survit au redémarrage du service : la caméra reste éteinte.
+        standby = preferences.getBoolean(PREF_STANDBY, false)
+        standbyReason = preferences.getString(PREF_STANDBY_REASON, "") ?: ""
+        autoStandby = standbyReason == REASON_BATTERY
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "Cannot start surveillance: camera or microphone permission is missing")
@@ -101,6 +105,10 @@ class MonitorService : LifecycleService() {
                     if (requestedFacing != null) {
                         pendingCameraFacing = null
                         rebindCamera(requestedFacing)
+                    } else if (standby) {
+                        updateStatus(standbyText())
+                        publishMonitorState(active = true)
+                        publishLiveStatus()
                     } else if (bindCamera(cameraProvider!!)) {
                         updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
                         publishMonitorState(active = true)
@@ -145,6 +153,8 @@ class MonitorService : LifecycleService() {
         Log.i(TAG, "Service start command: ${intent?.action ?: "START"}")
         if (intent?.action == ACTION_SWITCH_CAMERA) {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
+        } else if (intent?.action == ACTION_STANDBY && !shuttingDown) {
+            if (intent.getBooleanExtra(EXTRA_STANDBY, false)) enterStandby(REASON_MANUAL) else exitStandby()
         } else if (intent?.action == ACTION_STOP_ALARM) {
             stopSiren()
         } else if (intent?.action == ACTION_SET_SOUND && !shuttingDown) {
@@ -197,6 +207,12 @@ class MonitorService : LifecycleService() {
      * Si un clip est en cours, attend son callback Finalize avant de remplacer les anciens cas d’usage.
      */
     @Synchronized private fun requestCameraSwitch(frontCamera: Boolean) {
+        if (standby) {
+            // En veille : la caméra choisie sera utilisée à la reprise.
+            useFrontCamera = frontCamera
+            getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean("front_camera", frontCamera).apply()
+            return
+        }
         if (shuttingDown || (frontCamera == useFrontCamera && pendingCameraFacing == null)) return
         pendingCameraFacing = frontCamera
         if (recording != null) {
@@ -283,7 +299,7 @@ class MonitorService : LifecycleService() {
     }
 
     private fun startSoundDetection() {
-        if (recording != null || audioRecord != null) return
+        if (recording != null || audioRecord != null || standby) return
         // Par défaut seul le mouvement déclenche un clip ; le son est une option des réglages.
         if (!getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) return
         // La permission peut être révoquée depuis les réglages pendant la vie du service.
@@ -342,13 +358,17 @@ class MonitorService : LifecycleService() {
                             publishLiveStatus()
                             if (!shuttingDown) {
                                 val nextFacing = pendingCameraFacing
-                                if (nextFacing != null) {
+                                val nextStandby = pendingStandby
+                                if (nextStandby != null) {
+                                    pendingStandby = null
+                                    ContextCompat.getMainExecutor(this).execute { enterStandby(nextStandby) }
+                                } else if (nextFacing != null) {
                                     pendingCameraFacing = null
                                     rebindCamera(nextFacing)
                                 } else startSoundDetection()
                             }
                         }
-                        if (!shuttingDown) updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+                        if (!shuttingDown && !standby && pendingStandby == null) updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
                         if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
                         else getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
@@ -447,7 +467,7 @@ class MonitorService : LifecycleService() {
      * CameraX tient le micro, pour ne jamais gêner la piste audio du clip.
      */
     @Synchronized private fun startLiveAudio() {
-        if (liveAudio != null || liveServer?.hasAudioListeners() != true || startingRecording) return
+        if (liveAudio != null || liveServer?.hasAudioListeners() != true || startingRecording || standby) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         val rate = LiveProtocol.AUDIO_SAMPLE_RATE
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -524,7 +544,10 @@ class MonitorService : LifecycleService() {
         "sound" to if (getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) "1" else "0",
         // Batterie du téléphone caméra, affichée chez les spectateurs.
         "bat" to batteryLevel.toString(),
-        "chg" to if (batteryCharging) "1" else "0"
+        "chg" to if (batteryCharging) "1" else "0",
+        "standby" to if (standby) "1" else "0",
+        "standbywhy" to standbyReason,
+        "thr" to standbyThreshold().toString()
     )
 
     @Volatile private var batteryLevel = -1
@@ -540,7 +563,7 @@ class MonitorService : LifecycleService() {
             val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
             if (percent == batteryLevel && charging == batteryCharging) return
             batteryLevel = percent; batteryCharging = charging
-            if (!shuttingDown) publishLiveStatus()
+            if (!shuttingDown) { checkBatteryStandby(); publishLiveStatus() }
         }
     }
 
@@ -554,6 +577,8 @@ class MonitorService : LifecycleService() {
                 val on = request["value"] == "1"
                 when (request["op"]) {
                     "alarm" -> if (on) startSiren() else stopSiren()
+                    "standby" -> if (on) enterStandby(REASON_REMOTE) else exitStandby()
+                    "threshold" -> request["value"]?.toIntOrNull()?.let { setStandbyThreshold(it) }
                     "sound" -> setSoundTrigger(on)
                 }
             }
@@ -601,10 +626,81 @@ class MonitorService : LifecycleService() {
             manager.createNotificationChannel(NotificationChannel(DETECTION_CHANNEL_ID, "Mouvements détectés", NotificationManager.IMPORTANCE_HIGH))
         }
     }
+    // ——— Veille : caméra, analyse et micro coupés ; connexion des spectateurs conservée. ———
+    @Volatile private var standby = false
+    private var standbyReason = ""
+    private var autoStandby = false
+    private var pendingStandby: String? = null
+    // Reprise demandée à la main sous le seuil : pas de nouvelle veille auto avant la prochaine charge.
+    private var autoStandbySuppressed = false
+
+    private fun standbyThreshold() = getSharedPreferences("lynx", Context.MODE_PRIVATE).getInt(PREF_STANDBY_THRESHOLD, DEFAULT_STANDBY_THRESHOLD)
+
+    private fun setStandbyThreshold(percent: Int) {
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putInt(PREF_STANDBY_THRESHOLD, percent.coerceIn(0, 90)).apply()
+        checkBatteryStandby()
+        publishLiveStatus()
+    }
+
+    /** Veille automatique sous le seuil hors charge ; reprise automatique dès que le téléphone est branché. */
+    private fun checkBatteryStandby() {
+        val threshold = standbyThreshold()
+        if (batteryCharging) autoStandbySuppressed = false
+        if (!batteryCharging && threshold > 0 && batteryLevel in 0..threshold && !standby && pendingStandby == null && !autoStandbySuppressed) {
+            enterStandby(REASON_BATTERY)
+        } else if (batteryCharging && standby && autoStandby) {
+            exitStandby()
+        }
+    }
+
+    private fun standbyText() = when (standbyReason) {
+        REASON_BATTERY -> "En veille · batterie faible ($batteryLevel %), reprise au branchement"
+        REASON_REMOTE -> "En veille · demandée par un spectateur"
+        else -> "En veille · caméra et micro coupés"
+    }
+
+    /** Met en veille ; si un clip est en cours, attend qu’il soit finalisé. */
+    private fun enterStandby(reason: String) {
+        if (standby || shuttingDown) return
+        if (recording != null) { pendingStandby = reason; recording?.stop(); return }
+        standby = true; standbyReason = reason; autoStandby = reason == REASON_BATTERY
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean(PREF_STANDBY, true).putString(PREF_STANDBY_REASON, reason).apply()
+        stopSoundDetection(); stopLiveAudio()
+        try { cameraProvider?.unbindAll() } catch (_: Exception) { }
+        boundCamera = null; analysisUseCase = null; videoCapture = null; activePreview = null
+        previousLuma = null
+        Log.i(TAG, "Standby ($reason)")
+        updateStatus(standbyText())
+        publishLiveStatus()
+        sendBroadcast(Intent(ACTION_STANDBY_CHANGED).setPackage(packageName))
+    }
+
+    private fun exitStandby() {
+        pendingStandby = null
+        if (!standby || shuttingDown) return
+        standby = false; standbyReason = ""; autoStandby = false
+        autoStandbySuppressed = !batteryCharging && batteryLevel in 0..standbyThreshold()
+        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean(PREF_STANDBY, false).remove(PREF_STANDBY_REASON).apply()
+        Log.i(TAG, "Leaving standby")
+        val provider = cameraProvider
+        if (provider != null) {
+            if (!bindCamera(provider)) { stopWithFailure("Impossible de rouvrir la caméra après la veille."); return }
+            lastFrameAt = 0L; lastMotionAt = 0L; lastSoundAt = 0L
+        }
+        updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+        startSoundDetection(); startLiveAudio()
+        publishLiveStatus()
+        sendBroadcast(Intent(ACTION_STANDBY_CHANGED).setPackage(packageName))
+    }
+
     private fun notification(message: String): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Œil de Lynx").setContentText(message)
         .setOngoing(true).setOnlyAlertOnce(true)
         .apply {
+            // En veille : bouton pour reprendre la surveillance depuis le téléphone caméra.
+            if (standby) addAction(0, "Reprendre la surveillance", PendingIntent.getService(this@MonitorService, 8,
+                Intent(this@MonitorService, MonitorService::class.java).setAction(ACTION_STANDBY).putExtra(EXTRA_STANDBY, false),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             // Sirène en cours : bouton pour l’arrêter directement depuis le téléphone caméra.
             if (siren?.isRunning == true) {
                 setContentText("Alarme en cours · $message")
@@ -672,6 +768,16 @@ class MonitorService : LifecycleService() {
         const val ACTION_LIVE_REFRESH = "fr.oeildelynx.action.LIVE_REFRESH"
         const val ACTION_SET_EXPOSURE = "fr.oeildelynx.action.SET_EXPOSURE"
         const val ACTION_STOP_ALARM = "fr.oeildelynx.action.STOP_ALARM"
+        const val ACTION_STANDBY = "fr.oeildelynx.action.STANDBY"
+        const val ACTION_STANDBY_CHANGED = "fr.oeildelynx.action.STANDBY_CHANGED"
+        const val EXTRA_STANDBY = "standby"
+        const val PREF_STANDBY = "standby"
+        const val PREF_STANDBY_REASON = "standby_reason"
+        const val PREF_STANDBY_THRESHOLD = "standby_threshold"
+        const val DEFAULT_STANDBY_THRESHOLD = 20
+        const val REASON_BATTERY = "batterie"
+        const val REASON_REMOTE = "spectateur"
+        const val REASON_MANUAL = "manuel"
         const val ACTION_SET_SOUND = "fr.oeildelynx.action.SET_SOUND"
         const val EXTRA_SOUND = "sound_trigger"
         const val EXTRA_EXPOSURE = "exposure_index"

@@ -63,6 +63,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
                 background = LynxUi.circle(0xff17261d.toInt())
             }, LinearLayout.LayoutParams(dp(88), dp(88)))
             addView(waitingText)
+            // Caméra en veille : pas d’image, mais on peut la réveiller d’ici.
+            standbyButton = LynxUi.button(this@LiveActivity, "Reprendre la surveillance", iconRes = R.drawable.ic_play) {
+                client?.sendRequest(mapOf("op" to "standby", "value" to "0"))
+                waitingText.text = "Réveil de la caméra…"
+            }.apply { visibility = View.GONE }
+            addView(standbyButton, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(22) })
         }
         root.addView(waiting, FrameLayout.LayoutParams(-1, -1))
 
@@ -187,6 +193,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     private var exposureReport: TextView? = null
+    private lateinit var standbyButton: View
     private var showBattery: ((Int, Boolean) -> Unit)? = null
     private lateinit var meterMarker: View
 
@@ -337,6 +344,15 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
         lastStatus = fields
+        val asleep = fields["standby"] == "1"
+        if (::standbyButton.isInitialized) {
+            standbyButton.visibility = if (asleep) View.VISIBLE else View.GONE
+            if (asleep) {
+                waiting.visibility = View.VISIBLE
+                waitingText.text = if (fields["standbywhy"] == MonitorService.REASON_BATTERY)
+                    "Caméra en veille : batterie faible. Elle reprendra seule une fois branchée." else "Caméra en veille : caméra et micro coupés."
+            }
+        }
         fields["bat"]?.toIntOrNull()?.let { showBattery?.invoke(it, fields["chg"] == "1") }
         if (fields["meter"] == "0" && ::meterMarker.isInitialized) meterMarker.visibility = View.GONE
         fields["expreport"]?.let { exposureReport?.text = it }

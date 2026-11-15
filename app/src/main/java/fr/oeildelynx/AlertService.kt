@@ -52,7 +52,12 @@ class AlertService : Service() {
             if (nowRecording && recording != true) notifyMotion(cameraId, fields["why"].orEmpty())
             recording = nowRecording
             checkBattery(fields["bat"]?.toIntOrNull(), fields["chg"] == "1")
+            val asleep = fields["standby"] == "1"
+            if (asleep && standby == false && fields["standbywhy"] == MonitorService.REASON_BATTERY) notifyStandby(cameraId, fields["bat"])
+            standby = asleep
         }
+
+        @Volatile var standby: Boolean? = null
 
         @Volatile var lowBatteryNotified = false
 
@@ -163,6 +168,16 @@ class AlertService : Service() {
             .setSmallIcon(android.R.drawable.ic_lock_idle_low_battery)
             .setContentTitle("Batterie faible · $name ($percent %)")
             .setContentText("Branche le téléphone caméra, sinon la surveillance s’arrêtera bientôt.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openLive(cameraId)).setAutoCancel(true).build())
+    }
+
+    private fun notifyStandby(cameraId: String, battery: String?) {
+        val name = ViewerStore.find(this, cameraId)?.name ?: "Caméra"
+        post(batteryId(cameraId), NotificationCompat.Builder(this, CHANNEL_ALERTS)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_low_battery)
+            .setContentTitle("$name en veille (batterie ${battery ?: "?"} %)")
+            .setContentText("Plus de détection ni d’enregistrement. Reprise automatique dès que le téléphone caméra est branché.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(openLive(cameraId)).setAutoCancel(true).build())
     }
