@@ -90,6 +90,9 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             addView(TextView(this@LiveActivity).apply { text = "REC"; textSize = 11.5f; letterSpacing = .12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD })
         }
         top.addView(recBadge)
+        val (battery, updateBattery) = LynxUi.batteryChip(this)
+        showBattery = updateBattery
+        top.addView(battery, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         top.addView(iconButton(R.drawable.ic_gallery, "Galerie de la caméra") {
             startActivity(Intent(this, RemoteGalleryActivity::class.java).putExtra(EXTRA_CAMERA_ID, camera.id))
         })
@@ -184,6 +187,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     private var exposureReport: TextView? = null
+    private var showBattery: ((Int, Boolean) -> Unit)? = null
     private lateinit var meterMarker: View
 
     /** Point touché → coordonnées dans l’image de la caméra (rotation annulée) → commande « meter ». */
@@ -333,6 +337,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
         lastStatus = fields
+        fields["bat"]?.toIntOrNull()?.let { showBattery?.invoke(it, fields["chg"] == "1") }
         if (fields["meter"] == "0" && ::meterMarker.isInitialized) meterMarker.visibility = View.GONE
         fields["expreport"]?.let { exposureReport?.text = it }
         val alarmOn = fields["alarm"] == "1"

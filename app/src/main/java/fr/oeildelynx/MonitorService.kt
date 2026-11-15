@@ -119,6 +119,8 @@ class MonitorService : LifecycleService() {
         startSoundDetection()
         startLive()
         startOrientationTracking()
+        // Intent « collant » : le niveau actuel arrive tout de suite, puis à chaque changement.
+        ContextCompat.registerReceiver(this, batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     /**
@@ -519,8 +521,28 @@ class MonitorService : LifecycleService() {
         "cam" to if (useFrontCamera) "front" else "back",
         "n" to LiveCamera.name(this),
         "alarm" to if (siren?.isRunning == true) "1" else "0",
-        "sound" to if (getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) "1" else "0"
+        "sound" to if (getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) "1" else "0",
+        // Batterie du téléphone caméra, affichée chez les spectateurs.
+        "bat" to batteryLevel.toString(),
+        "chg" to if (batteryCharging) "1" else "0"
     )
+
+    @Volatile private var batteryLevel = -1
+    @Volatile private var batteryCharging = false
+
+    /** Suit la batterie : chaque changement de pourcentage ou de branchement est envoyé aux spectateurs. */
+    private val batteryReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            val percent = if (level >= 0) level * 100 / scale else -1
+            val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            if (percent == batteryLevel && charging == batteryCharging) return
+            batteryLevel = percent; batteryCharging = charging
+            if (!shuttingDown) publishLiveStatus()
+        }
+    }
 
     /**
      * Commandes d’un spectateur : `op=alarm|sound&value=1|0`, ou `op=settings` pour lire l’état.
@@ -614,6 +636,7 @@ class MonitorService : LifecycleService() {
         recording?.stop(); stopSoundDetection()
         stopLive()
         orientationListener?.disable(); orientationListener = null
+        try { unregisterReceiver(batteryReceiver) } catch (_: IllegalArgumentException) { }
         activePreview = null
         try { ProcessCameraProvider.getInstance(this).get().unbindAll() } catch (_: Exception) { }
         if (::executor.isInitialized) executor.shutdownNow()
