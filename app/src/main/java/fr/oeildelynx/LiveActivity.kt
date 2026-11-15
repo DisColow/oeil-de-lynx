@@ -120,6 +120,13 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         val alarm = control(R.drawable.ic_bell, "Alarme") { toggleAlarm() }
         alarmIcon = alarm.second; alarmLabel = alarm.third
         bottom.addView(alarm.first, LinearLayout.LayoutParams(0, -2, 1f))
+        val motion = control(R.drawable.ic_motion, "Continu") { setMotionOnly(!motionOnly) }
+        motionIcon = motion.second; motionLabel = motion.third
+        bottom.addView(motion.first, LinearLayout.LayoutParams(0, -2, 1f))
+
+        // Mode « sur mouvement » sans mouvement : bandeau au-dessus de la dernière image reçue.
+        motionWaiting = LynxUi.chip(this, "Direct sur mouvement · en attente d’un mouvement", LynxUi.WARNING, 0xcc101713.toInt()).first.apply { visibility = View.GONE }
+        root.addView(motionWaiting, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(104) })
         panel.addView(bottom, LinearLayout.LayoutParams(-1, -2))
         root.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         setContentView(root)
@@ -128,7 +135,10 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         client = LiveClient(applicationContext, camera.id, this).apply {
             extraRotation = viewerPrefs.getInt("rotation_${camera.id}", 0)
             audioEnabled = viewerPrefs.getBoolean("audio_${camera.id}", true)
+            motionOnly = viewerPrefs.getBoolean("motiononly_${camera.id}", false)
         }
+        motionOnly = client?.motionOnly == true
+        renderMotionOnly()
         soundOn = client?.audioEnabled == true
         renderSound()
     }
@@ -305,10 +315,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     override fun onStart() {
         super.onStart()
+        if (::motionWaiting.isInitialized) { motionWaiting.removeCallbacks(motionWatch); motionWaiting.post(motionWatch) }
         client?.start()
     }
 
     override fun onStop() {
+        if (::motionWaiting.isInitialized) motionWaiting.removeCallbacks(motionWatch)
         stopTalking()
         // Pas de flux en arrière-plan : économise la batterie et les données mobiles.
         client?.stop()
@@ -340,6 +352,38 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         shownBitmap = bitmap
         waiting.visibility = View.GONE
         previous?.takeIf { it !== bitmap }?.recycle()
+        lastFrameAt = android.os.SystemClock.elapsedRealtime()
+        motionWaiting.visibility = View.GONE
+    }
+
+    private var motionOnly = false
+    private var lastFrameAt = 0L
+    private lateinit var motionIcon: ImageView
+    private lateinit var motionLabel: TextView
+    private lateinit var motionWaiting: View
+    private val motionWatch = object : Runnable {
+        override fun run() {
+            // Plus d’image depuis 2 s en mode « sur mouvement » : on l’indique, l’image reste la dernière reçue.
+            val idle = motionOnly && lastFrameAt > 0 && android.os.SystemClock.elapsedRealtime() - lastFrameAt > 2_000
+            motionWaiting.visibility = if (idle) View.VISIBLE else View.GONE
+            motionWaiting.postDelayed(this, 1_000)
+        }
+    }
+
+    private fun setMotionOnly(on: Boolean) {
+        motionOnly = on
+        viewerPrefs.edit().putBoolean("motiononly_$cameraKey", on).apply()
+        client?.motionOnly = on
+        renderMotionOnly()
+        Toast.makeText(this, if (on) "Direct sur mouvement : images seulement quand la caméra détecte un mouvement." else "Direct continu.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun renderMotionOnly() {
+        if (!::motionIcon.isInitialized) return
+        motionIcon.background = LynxUi.pressableCircle(if (motionOnly) LynxUi.ACCENT_STRONG else 0x66223029)
+        motionLabel.text = if (motionOnly) "Sur mouvement" else "Continu"
+        motionIcon.contentDescription = if (motionOnly) "Direct seulement sur mouvement" else "Direct continu"
+        if (!motionOnly) motionWaiting.visibility = View.GONE
     }
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
