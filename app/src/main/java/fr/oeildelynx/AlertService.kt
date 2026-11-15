@@ -51,6 +51,22 @@ class AlertService : Service() {
             // Une seule alerte par clip, même si la connexion tombe et revient pendant l’enregistrement.
             if (nowRecording && recording != true) notifyMotion(cameraId, fields["why"].orEmpty())
             recording = nowRecording
+            checkBattery(fields["bat"]?.toIntOrNull(), fields["chg"] == "1")
+        }
+
+        @Volatile var lowBatteryNotified = false
+
+        /** Une alerte quand la batterie passe sous 15 % hors charge ; réarmée une fois rechargée (≥ 20 % ou branchée). */
+        private fun checkBattery(percent: Int?, charging: Boolean) {
+            if (percent == null || percent !in 0..100) return
+            if (charging || percent >= LOW_BATTERY_REARM) {
+                if (lowBatteryNotified) { lowBatteryNotified = false; cancel(batteryId(cameraId)) }
+                return
+            }
+            if (percent <= LOW_BATTERY && !lowBatteryNotified) {
+                lowBatteryNotified = true
+                notifyLowBattery(cameraId, percent)
+            }
         }
     }
 
@@ -141,6 +157,18 @@ class AlertService : Service() {
 
     private fun cancel(id: Int) = getSystemService(NotificationManager::class.java).cancel(id)
 
+    private fun notifyLowBattery(cameraId: String, percent: Int) {
+        val name = ViewerStore.find(this, cameraId)?.name ?: "Caméra"
+        post(batteryId(cameraId), NotificationCompat.Builder(this, CHANNEL_ALERTS)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_low_battery)
+            .setContentTitle("Batterie faible · $name ($percent %)")
+            .setContentText("Branche le téléphone caméra, sinon la surveillance s’arrêtera bientôt.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openLive(cameraId)).setAutoCancel(true).build())
+    }
+
+    private fun batteryId(cameraId: String) = 140_000 + (cameraId.hashCode() and 0xffff)
+
     private fun motionId(cameraId: String) = 1000 + (cameraId.hashCode() and 0xffff)
     private fun lostId(cameraId: String) = 70_000 + (cameraId.hashCode() and 0xffff)
 
@@ -149,6 +177,8 @@ class AlertService : Service() {
         private const val CHANNEL_ALERTS = "lynx-viewer-alerts"
         private const val ONGOING_ID = 77
         private const val LOST_ALERT_MS = 180_000L
+        private const val LOW_BATTERY = 15
+        private const val LOW_BATTERY_REARM = 20
 
         /** Démarre, met à jour ou arrête le service selon les caméras dont les alertes sont activées. */
         fun sync(context: Context) {
