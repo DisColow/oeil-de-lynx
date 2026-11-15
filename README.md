@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.13.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.13.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.13.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.13.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -96,6 +96,7 @@ Comme le direct, la galerie à distance n’est accessible que pendant la survei
 Sur le téléphone spectateur, les notifications sont proposées dès l’appairage ; ensuite, le bouton **🔔 Notifications de mouvement** sous chaque caméra (Réglages › Regarder une caméra) les active ou les coupe. Android demande l’autorisation d’afficher des notifications. Le téléphone garde alors une connexion directe et légère avec la caméra, sans image (un signe de vie toutes les 25 s), et affiche :
 
 - une notification « Mouvement détecté · *caméra* » au début de chaque clip ; la toucher ouvre le direct ;
+- une notification « Batterie faible » quand la batterie de la caméra passe sous 15 % sans être en charge (une seule fois, réarmée une fois rechargée au-dessus de 20 % ou branchée) ;
 - une notification si la caméra reste injoignable plus de 3 minutes (surveillance arrêtée, Wi-Fi ou box coupés…).
 
 Comme il n’y a pas de serveur de notifications (type Firebase), c’est un service de premier plan du téléphone spectateur qui maintient la connexion ; une notification discrète indique l’état de chaque caméra. Il redémarre avec le téléphone. Les mêmes conditions réseau que le direct s’appliquent ; exclure l’application de l’optimisation de batterie sur le téléphone spectateur pour éviter qu’Android ne coupe la connexion. Jusqu’à 5 téléphones peuvent recevoir les alertes d’une caméra, en plus des 3 spectateurs du direct.
@@ -204,11 +205,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.13.0
-git push origin v1.13.0
+git tag v1.13.1
+git push origin v1.13.1
 ```
 
-Remplacer `1.13.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
+Remplacer `1.13.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le joint à une GitHub Release sous le nom `oeil-de-lynx-X.Y.Z.apk` (APK seul, pas d’archive ZIP).
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
