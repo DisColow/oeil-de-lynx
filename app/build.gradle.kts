@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "fr.oeildelynx"
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -19,7 +19,7 @@ android {
     defaultConfig {
         applicationId = "fr.oeildelynx"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         // Repli local pour le build debug ; en release, APP_VERSION vient toujours du tag vX.Y.Z.
         val version = System.getenv("APP_VERSION") ?: "1.0.0"
         val parts = version.split(".").map { it.toIntOrNull() ?: error("APP_VERSION doit suivre X.Y.Z") }

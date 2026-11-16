@@ -41,7 +41,7 @@ jobs:
           APP_VERSION="${TAG#v}" \
           SIGNING_KEYSTORE_FILE="$RUNNER_TEMP/oeil-de-lynx-release.p12" \
           SIGNING_PASSWORD="$SIGNING_PASSWORD" \
-          gradle --no-daemon testDebugUnitTest lintDebug assembleRelease
+          gradle --no-daemon testDebugUnitTest lintDebug assembleRelease bundleRelease
       - name: Prepare versioned APK
         shell: bash
         run: |
@@ -49,7 +49,9 @@ jobs:
           VERSION="${TAG#v}"
           mkdir -p release
           cp app/build/outputs/apk/release/app-release.apk "release/oeil-de-lynx-${VERSION}.apk"
+          # Bundle signé pour la Google Play Console (Play App Signing).
+          cp app/build/outputs/bundle/release/app-release.aab "release/oeil-de-lynx-${VERSION}.aab"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" --target "$GITHUB_SHA" "release/oeil-de-lynx-${TAG#v}.apk" --title "Œil de Lynx $TAG" --generate-notes
+        run: gh release create "$TAG" --target "$GITHUB_SHA" "release/oeil-de-lynx-${TAG#v}.apk" "release/oeil-de-lynx-${TAG#v}.aab" --title "Œil de Lynx $TAG" --generate-notes

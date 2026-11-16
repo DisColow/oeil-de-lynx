@@ -1,6 +1,7 @@
 package fr.oeildelynx
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import android.content.ContentUris
 import android.content.DialogInterface
 import android.graphics.Color
@@ -25,7 +26,7 @@ import java.util.Date
 import java.util.Locale
 
 /** Galerie plein écran des clips partagés dans Movies et des anciens clips privés de l’application. */
-class GalleryActivity : Activity() {
+class GalleryActivity : ComponentActivity() {
     /**
      * Les clips actuels utilisent une URI MediaStore. [legacyFile] ne sert qu’aux clips
      * enregistrés dans le dossier privé par les versions précédentes.
@@ -56,6 +57,7 @@ class GalleryActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, backFromPlayer)
         enableImmersiveMode()
         buildGallery()
         reloadCaptures()
@@ -315,8 +317,9 @@ class GalleryActivity : Activity() {
     private fun rounded(color: Int, radius: Int) = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = radius.toFloat(); setColor(color) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    override fun onBackPressed() {
-        if (player != null) showList() else super.onBackPressed()
+    /** Retour (geste ou bouton) : depuis la lecture, revient à la liste ; sinon quitte la galerie. Compatible Android 16. */
+    private val backFromPlayer = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() { if (player != null) showList() else finish() }
     }
 
     override fun onDestroy() { player?.release(); thumbnailLoader.shutdownNow(); super.onDestroy() }
