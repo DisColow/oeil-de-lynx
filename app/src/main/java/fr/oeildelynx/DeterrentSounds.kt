@@ -16,17 +16,21 @@ import kotlin.random.Random
 internal object DeterrentSounds {
     const val RATE = 44_100
 
-    enum class Effect(val id: String, val label: String, val description: String) {
-        HISS("hiss", "Feulement", "Le « khhh » d’un chat qui menace"),
-        GROWL_HISS("growl", "Grognement + feulement", "Grondement grave puis feulement"),
-        AIR("air", "Bombe d’air « pschht »", "Jet d’air comprimé, très efficace sur les chats"),
-        CLAP("clap", "Claquements de mains", "Trois claquements secs"),
-        BARK("bark", "Aboiements", "Deux aboiements de chien"),
-        KNOCK("knock", "Coups à la porte", "Toc toc toc"),
-        WHISTLE("whistle", "Sifflet strident", "Sifflet à roulette, perçant"),
-        HIGH("high", "Son très aigu", "Bip aigu désagréable (selon le haut-parleur)"),
-        FOIL("foil", "Papier alu froissé", "Crépitement que les chats détestent"),
-        HORN("horn", "Corne", "Coup de corne grave et puissant");
+    /**
+     * [recording] : nom de l’enregistrement réel (res/raw, licence libre, voir CREDITS) joué en priorité ;
+     * la version synthétisée ne sert que si l’enregistrement manque ou ne peut pas être lu.
+     */
+    enum class Effect(val id: String, val label: String, val description: String, val recording: String?) {
+        HISS("hiss", "Feulement", "Vrai chat qui feule", "fx_hiss"),
+        GROWL_HISS("growl", "Grognement + feulement", "Grondement grave puis feulement (synthétisé)", "fx_growl"),
+        AIR("air", "Bombe d’air « pschht »", "Jet d’air comprimé, très efficace", "fx_air"),
+        CLAP("clap", "Claquements de mains", "Trois claquements secs (synthétisés)", "fx_clap"),
+        BARK("bark", "Aboiements", "Vrai chien qui aboie", "fx_bark"),
+        KNOCK("knock", "Coups à la porte", "Toc toc toc", "fx_knock"),
+        WHISTLE("whistle", "Sifflet d’arbitre", "Coup de sifflet perçant", "fx_whistle"),
+        FOIL("foil", "Emballage froissé", "Crépitement que les chats détestent", "fx_foil"),
+        HORN("horn", "Corne de brume", "Coup de corne grave et puissant", "fx_horn"),
+        HIGH("high", "Son très aigu", "Bip aigu désagréable (synthétisé, selon le haut-parleur)", null);
 
         companion object { fun byId(id: String?) = entries.firstOrNull { it.id == id } }
     }

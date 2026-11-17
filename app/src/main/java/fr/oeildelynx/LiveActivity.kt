@@ -290,6 +290,11 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
             box.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
+        // Crédits obligatoires (licences libres des enregistrements, dont CC BY-SA).
+        box.addView(TextView(this).apply {
+            text = "Crédits des sons"; textSize = 13f; setTextColor(LynxUi.ACCENT); setPadding(dp(6), dp(14), dp(6), dp(4))
+            setOnClickListener { showSoundCredits() }
+        })
         dialog.setContentView(android.widget.ScrollView(this).apply { addView(box) })
         dialog.window?.apply {
             setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
@@ -297,6 +302,10 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         dialog.show()
+    }
+
+    private fun showSoundCredits() {
+        AlertDialog.Builder(this).setTitle("Crédits des sons").setMessage(SOUND_CREDITS).setPositiveButton("OK", null).show()
     }
 
     private val viewerPrefs by lazy { getSharedPreferences("lynx_viewer", MODE_PRIVATE) }
@@ -468,5 +477,19 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         fields["n"]?.takeIf { it.isNotBlank() }?.let { title.text = it }
     }
 
-    companion object { const val EXTRA_CAMERA_ID = "camera_id" }
+    companion object {
+        const val EXTRA_CAMERA_ID = "camera_id"
+
+        /** Sources des enregistrements (Wikimedia Commons), découpés, amplifiés et convertis. */
+        private const val SOUND_CREDITS =
+            "Enregistrements issus de Wikimedia Commons, modifiés (découpe, amplification, conversion) :\n\n" +
+            "• Feulement : « Cat hissing » — Zabuhailo — CC0\n" +
+            "• Bombe d’air : « Can of compressed air » — stilgar — domaine public\n" +
+            "• Aboiements : « Barking of a dog » — Amada44 — CC BY-SA 3.0 (creativecommons.org/licenses/by-sa/3.0)\n" +
+            "• Coups à la porte : « Knock on door » — Asud12 — CC0\n" +
+            "• Sifflet : « referee-whistle-blow-gymnasium » — SpliceSound — CC0\n" +
+            "• Emballage froissé : « Food wrapper crumpling » — stilgar — domaine public\n" +
+            "• Corne de brume : « Fog signal Bremerhaven » — Tvabutzku1234 — CC0\n\n" +
+            "Les autres sons sont générés par l’application."
+    }
 }
