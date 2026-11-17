@@ -110,7 +110,20 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             setPadding(dp(16), dp(30), dp(16), dp(22))
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xe60b110e.toInt(), 0x990b110e.toInt(), 0x000b110e))
         }
-        panel.addView(talkButton(), LinearLayout.LayoutParams(-2, dp(54)).apply { bottomMargin = dp(18) })
+        // « Parler » et « Sons » côte à côte : les deux font sortir un son sur la caméra.
+        panel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            addView(talkButton(), LinearLayout.LayoutParams(-2, dp(54)))
+            addView(LinearLayout(this@LiveActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(18), 0, dp(20), 0)
+                background = LynxUi.pressable(this@LiveActivity, LynxUi.CARD_HIGH, 27)
+                contentDescription = "Jouer un son sur la caméra"
+                addView(LynxUi.icon(this@LiveActivity, R.drawable.ic_volume, LynxUi.TEXT, 22).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8) })
+                addView(TextView(this@LiveActivity).apply { text = "Sons"; textSize = 15f; setTextColor(LynxUi.TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
+                setOnClickListener { showSounds() }
+            }, LinearLayout.LayoutParams(-2, dp(54)).apply { leftMargin = dp(10) })
+        }, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(18) })
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val sound = control(R.drawable.ic_volume, "Son") { setSound(!soundOn) }
         soundIcon = sound.second; soundLabel = sound.third
@@ -238,6 +251,52 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             .setMessage("Une sirène stridente va retentir sur la caméra, volume au maximum, même en silencieux, pendant 2 minutes ou jusqu’à ce que tu l’arrêtes.")
             .setPositiveButton("Déclencher") { _, _ -> client?.sendRequest(mapOf("op" to "alarm", "value" to "1")) }
             .setNegativeButton("Annuler", null).show()
+    }
+
+    /**
+     * Panneau de sons dissuasifs (feulement, bombe d’air, aboiements…) joués au volume maximum sur
+     * la caméra. Il reste ouvert pour enchaîner plusieurs sons.
+     */
+    private fun showSounds() {
+        if (lastStatus.isEmpty()) { Toast.makeText(this, "Direct non connecté.", Toast.LENGTH_SHORT).show(); return }
+        val dp = { value: Int -> LynxUi.dp(this, value) }
+        val dialog = android.app.Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(10), dp(16), dp(24))
+            background = GradientDrawable().apply { setColor(LynxUi.SURFACE); val r = dp(28).toFloat(); cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f) }
+        }
+        box.addView(View(this).apply { background = LynxUi.rounded(this@LiveActivity, LynxUi.OUTLINE, 3) },
+            LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(14) })
+        box.addView(LynxUi.title(this, "Sons sur la caméra", 18f))
+        box.addView(LynxUi.body(this, "Joués au volume maximum, même en silencieux. Toucher pour jouer.", 12.5f).apply { setPadding(0, dp(4), 0, dp(12)) })
+        val effects = DeterrentSounds.Effect.entries
+        effects.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            pair.forEach { effect ->
+                row.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(12), dp(12))
+                    background = LynxUi.pressable(this@LiveActivity, LynxUi.CARD_HIGH, 16)
+                    contentDescription = effect.label
+                    addView(TextView(this@LiveActivity).apply { text = effect.label; textSize = 14.5f; setTextColor(LynxUi.TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
+                    addView(LynxUi.body(this@LiveActivity, effect.description, 11.5f).apply { setPadding(0, dp(3), 0, 0) })
+                    setOnClickListener {
+                        client?.sendRequest(mapOf("op" to "fx", "id" to effect.id))
+                        // Retour visuel bref : le son part sur la caméra, rien ne se joue ici.
+                        animate().cancel(); alpha = .5f; animate().alpha(1f).setDuration(500).start()
+                    }
+                }, LinearLayout.LayoutParams(0, -1, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+            }
+            if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
+            box.addView(row, LinearLayout.LayoutParams(-1, -2))
+        }
+        dialog.setContentView(android.widget.ScrollView(this).apply { addView(box) })
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.show()
     }
 
     private val viewerPrefs by lazy { getSharedPreferences("lynx_viewer", MODE_PRIVATE) }

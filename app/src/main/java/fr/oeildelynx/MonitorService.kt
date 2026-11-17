@@ -63,6 +63,7 @@ class MonitorService : LifecycleService() {
     @Volatile private var talkSpeaker: TalkSpeaker? = null
     // Sirène déclenchée par un spectateur.
     @Volatile private var siren: AlarmSiren? = null
+    @Volatile private var soundBoard: SoundBoard? = null
     @Volatile private var startingRecording = false
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
@@ -427,6 +428,11 @@ class MonitorService : LifecycleService() {
                     val value = request["value"]?.toIntOrNull()
                     if (request["op"] == "exposure" && value != null) {
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setExposure(value) }
+                    } else if (request["op"] == "fx") {
+                        // Son dissuasif choisi par un spectateur (feulement, bombe d’air…).
+                        DeterrentSounds.Effect.byId(request["id"])?.let { effect ->
+                            (soundBoard ?: SoundBoard(applicationContext).also { soundBoard = it }).play(effect)
+                        }
                     } else if (request["op"] == "meter") {
                         // Zone touchée dans le direct (x, y entre 0 et 1), ou reset=1 pour revenir en automatique.
                         val x = request["x"]?.toFloatOrNull(); val y = request["y"]?.toFloatOrNull()
@@ -500,6 +506,7 @@ class MonitorService : LifecycleService() {
     private fun stopLive() {
         stopLiveAudio()
         siren?.stop(); siren = null
+        soundBoard?.release(); soundBoard = null
         talkSpeaker?.release(); talkSpeaker = null
         val server = liveServer ?: return
         liveServer = null

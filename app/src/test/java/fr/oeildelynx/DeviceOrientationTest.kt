@@ -59,3 +59,24 @@ class MeteringZoneTest {
         assertEquals(0.5f to 0.5f, MeteringZone.toSource(0.5f, 0.5f, 450 - 360))
     }
 }
+
+class DeterrentSoundsTest {
+    @Test fun everySoundIsLoudAndLastsAboutASecond() {
+        for (effect in DeterrentSounds.Effect.entries) {
+            val pcm = DeterrentSounds.render(effect)
+            val seconds = pcm.size.toDouble() / DeterrentSounds.RATE
+            org.junit.Assert.assertTrue("${effect.id} : ${seconds}s", seconds in 0.4..3.0)
+            val peak = pcm.maxOf { kotlin.math.abs(it.toInt()) }
+            org.junit.Assert.assertTrue("${effect.id} : crête $peak", peak >= 30_000)
+            val rms = kotlin.math.sqrt(pcm.sumOf { it.toDouble() * it } / pcm.size)
+            // Son puissant : énergie moyenne élevée (saturation douce), sauf impulsions brèves séparées de silences.
+            org.junit.Assert.assertTrue("${effect.id} : RMS $rms", rms > 3_000)
+        }
+    }
+
+    @Test fun repeatedSoundsAreSequencedNotOverlapped() {
+        // Trois coups séparés de silences : la durée doit être la somme, pas celle d’un seul coup.
+        val knock = DeterrentSounds.render(DeterrentSounds.Effect.KNOCK)
+        assertEquals(((0.16 + 0.16) * 3 * DeterrentSounds.RATE).toInt(), knock.size)
+    }
+}
