@@ -22,17 +22,15 @@ internal object DeterrentSounds {
      */
     enum class Effect(val id: String, val label: String, val description: String, val recording: String?) {
         HISS("hiss", "Feulement", "Vrai chat qui feule", "fx_hiss"),
-        GROWL_HISS("growl", "Grognement de chat", "Vrai chat qui grogne", "fx_growl"),
+        GROWL_HISS("growl", "Grognement + feulement", "Grondement grave puis feulement (synthétisé)", "fx_growl"),
         AIR("air", "Bombe d’air « pschht »", "Jet d’air comprimé, très efficace", "fx_air"),
-        CLAP("clap", "Claquements de mains", "Claquements secs", "fx_clap"),
+        CLAP("clap", "Claquements de mains", "Trois claquements secs (synthétisés)", "fx_clap"),
         BARK("bark", "Aboiements", "Vrai chien qui aboie", "fx_bark"),
-        DOG_GROWL("doggrowl", "Grognement de chien", "Chien qui gronde", "fx_doggrowl"),
         KNOCK("knock", "Coups à la porte", "Toc toc toc", "fx_knock"),
         WHISTLE("whistle", "Sifflet d’arbitre", "Coup de sifflet perçant", "fx_whistle"),
         FOIL("foil", "Emballage froissé", "Crépitement que les chats détestent", "fx_foil"),
         HORN("horn", "Corne de brume", "Coup de corne grave et puissant", "fx_horn"),
-        VACUUM("vacuum", "Aspirateur", "Le bruit que beaucoup de chats fuient", "fx_vacuum"),
-        HIGH("high", "Son très aigu", "Bip aigu désagréable (selon le haut-parleur)", null);
+        HIGH("high", "Son très aigu", "Bip aigu désagréable (synthétisé, selon le haut-parleur)", null);
 
         companion object { fun byId(id: String?) = entries.firstOrNull { it.id == id } }
     }
@@ -47,8 +45,6 @@ internal object DeterrentSounds {
             Effect.BARK -> sequence(bark(random), silence(0.18), bark(random, 0.92))
             Effect.KNOCK -> sequence(*Array(3) { sequence(knock(random), silence(0.16)) })
             Effect.WHISTLE -> whistle(1.3)
-            Effect.DOG_GROWL -> growl(random, 1.4)
-            Effect.VACUUM -> air(random, 2.5)
             Effect.HIGH -> sequence(*Array(3) { sequence(tone(15_000.0, 0.35), silence(0.12)) })
             Effect.FOIL -> foil(random, 1.6)
             Effect.HORN -> horn(1.4)

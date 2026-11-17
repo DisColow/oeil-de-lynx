@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.17.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.18.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.17.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.18.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -21,7 +21,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - **Veille** : la surveillance peut être mise en veille (caméra, analyse et micro coupés) et reprise à distance depuis le spectateur, ou depuis la caméra ; mise en veille automatique sous 20 % de batterie hors charge, reprise automatique au branchement.
 - **Batterie de la caméra** visible sur le téléphone spectateur : pourcentage, en charge ou non, dans le direct et sous chaque caméra de la liste (vert, orange sous 50 %, rouge sous 20 %).
 - **Lumière sur une zone** : dans le direct, toucher une zone de l’image règle la luminosité de la caméra sur cette zone (lampe, fenêtre, coin sombre), comme dans l’appareil photo.
-- **Sons dissuasifs** : depuis le direct, bouton « Sons » : feulement, grognement, bombe d’air, aboiements, claquements de mains, coups à la porte, sifflet, son très aigu, papier alu, corne — joués au volume maximum sur le téléphone caméra pour détourner un chat d’une bêtise.
+- **Sons dissuasifs** : depuis le direct, bouton « Sons » : vrais enregistrements (feulement de chat, bombe d’air, aboiements, coups à la porte, sifflet, emballage froissé, corne de brume) et quelques sons synthétisés, joués au volume maximum sur le téléphone caméra pour détourner un chat d’une bêtise.
 - **Alarme à distance** : depuis le téléphone spectateur (liste des caméras ou direct), une sirène stridente retentit sur le téléphone caméra, volume au maximum, même en silencieux.
 - **Détection du son à distance** : activable ou désactivable depuis la liste des caméras du spectateur.
 - **Parler à travers la caméra** : bouton « Maintenir pour parler » dans le direct ; la voix sort du haut-parleur du téléphone caméra, volume au maximum.
@@ -76,7 +76,7 @@ Les adresses sont enregistrées dans le QR code puis **mises à jour automatique
 ### Son et orientation du direct
 
 - **Son** : le téléphone caméra ouvre son micro uniquement quand un spectateur écoute, et l’envoie en G.711 µ-law 16 kHz (≈ 128 kbit/s, en plus des 2 à 3 Mbit/s de l’image), chiffré comme le reste. Le bouton **Son** du direct le coupe ou le rétablit ; le choix est mémorisé par caméra. Au lancement d’un clip, le micro du direct est suspendu un instant pour laisser CameraX ouvrir la piste audio du clip, puis rouvert. *À vérifier sur chaque téléphone : certains Android peuvent rendre muet l’un des deux usages simultanés du micro ; la piste du clip reste prioritaire.*
-- **Sons** : bouton « Sons » à côté de « Parler » ; le panneau reste ouvert pour enchaîner les sons. Les dix sons sont synthétisés par l’application (aucun fichier audio, aucun droit d’auteur) et joués sur le flux alarme du téléphone caméra, volume d’alarme au maximum puis rétabli ; un nouveau son interrompt le précédent. Le « son très aigu » (15 kHz) dépend du haut-parleur : certains le restituent mal.
+- **Sons** : bouton « Sons » à côté de « Parler » ; le panneau reste ouvert pour enchaîner les sons. Sept sons sont de vrais enregistrements sous licence libre (Wikimedia Commons, voir [SOUND_CREDITS.md](SOUND_CREDITS.md) et « Crédits des sons » dans le panneau), découpés, amplifiés et intégrés à l’application (`res/raw/fx_*.ogg`, ~150 Ko au total) ; « Grognement + feulement », « Claquements de mains » et « Son très aigu » sont synthétisés. Lecture sur le flux alarme du téléphone caméra, volume d’alarme au maximum puis rétabli ; un nouveau son interrompt le précédent.
 - **Alarme** : bouton « Déclencher l’alarme sur la caméra » sous chaque caméra de la liste, ou bouton « Alarme » du direct (avec confirmation). Sirène à deux tons alternés sur le flux alarme, volume au maximum (rétabli ensuite) et vibration ; elle s’arrête depuis le spectateur, depuis la notification du téléphone caméra (« Arrêter l’alarme »), ou seule après 2 minutes.
 - **Détection du son à distance** : interrupteur « Détection du son » sous chaque caméra ; appliqué tout de suite par le téléphone caméra (aussi depuis ses propres Réglages, sans redémarrer la surveillance). La liste interroge la caméra à l’ouverture ; elle doit être en surveillance pour répondre.
 - **Direct sur mouvement** : le bouton « Continu » du direct bascule en « Sur mouvement » (mémorisé par caméra). La caméra envoie alors une image à la connexion, puis des images seulement pendant un mouvement (clip en cours ou mouvement détecté dans les 3 dernières secondes) ; sans mouvement, elle n’encode plus d’images pour ce spectateur. Le spectateur garde la dernière image avec le bandeau « en attente d’un mouvement ». Le son, s’il est activé, continue d’être transmis.
@@ -216,11 +216,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.17.0
-git push origin v1.17.0
+git tag v1.18.0
+git push origin v1.18.0
 ```
 
-Remplacer `1.17.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
+Remplacer `1.18.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
