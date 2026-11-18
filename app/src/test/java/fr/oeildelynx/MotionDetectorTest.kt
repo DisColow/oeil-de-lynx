@@ -42,15 +42,6 @@ class MotionDetectorTest {
         assertFalse(MotionDetector.hasMotion(withObject(previous, 0, 40), previous, Sensitivity.LOW))
     }
 
-    @Test fun distantCatIsDetectedOnlyAtVeryHighSensitivity() {
-        // 6 points ≈ 0,5 % de l’image : petit chat éloigné.
-        val previous = scene()
-        val current = withObject(previous, 300, 6)
-        assertTrue(MotionDetector.hasMotion(current, previous, Sensitivity.VERY_HIGH))
-        assertFalse(MotionDetector.hasMotion(current, previous, Sensitivity.HIGH))
-        assertFalse(MotionDetector.hasMotion(scene(), scene(), Sensitivity.VERY_HIGH))
-    }
-
     @Test fun movingObjectIsDetectedDespiteExposureChange() {
         val previous = scene(80)
         assertTrue(MotionDetector.hasMotion(withObject(scene(95), 600, 60), previous))

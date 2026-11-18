@@ -13,11 +13,8 @@ import kotlin.math.ceil
  */
 internal object MotionDetector {
     /** Part minimale des points de la grille qui doivent changer pour parler de mouvement. */
-    enum class Sensitivity(val label: String, val changedRatio: Double, val hint: String) {
-        LOW("Faible", 0.05, "grands mouvements seulement"),
-        NORMAL("Normale", 0.02, "une personne dans la pièce"),
-        HIGH("Élevée", 0.008, "petits mouvements, chat proche"),
-        VERY_HIGH("Très élevée", 0.004, "chat éloigné ; plus de fausses alertes")
+    enum class Sensitivity(val label: String, val changedRatio: Double) {
+        LOW("Faible", 0.05), NORMAL("Normale", 0.02), HIGH("Élevée", 0.008)
     }
 
     private const val PIXEL_DELTA = 25

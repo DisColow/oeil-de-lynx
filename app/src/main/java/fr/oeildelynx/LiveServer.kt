@@ -298,7 +298,7 @@ internal class LiveServer(
                         }
                         channel.send(LiveProtocol.TYPE_END)
                     }
-                    "settings", "alarm", "sound", "standby", "threshold", "sensitivity" ->
+                    "settings", "alarm", "sound", "standby", "threshold" ->
                         channel.send(LiveProtocol.TYPE_STATUS, LiveProtocol.encodeFields(onControl(request)).toByteArray(Charsets.UTF_8))
                     else -> channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
                 }

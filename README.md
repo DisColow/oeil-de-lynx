@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.19.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.18.1`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.19.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.18.1` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -35,7 +35,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 
 ## Comportement et limites
 
-Le détecteur vidéo analyse le flux d’analyse CameraX (640 × 480 visé, pour servir aussi au direct) toutes les 500 ms. Il compare une grille d’environ 40 × 30 points, chacun moyenné sur 2 × 2 pixels pour atténuer le grain. L’écart médian entre deux images est d’abord retiré, ce qui neutralise les variations globales de luminosité (exposition automatique, nuage) ; un point est « modifié » s’il change ensuite de plus de 25 niveaux. Il y a mouvement si au moins 5 % (faible), 2 % (normale, par défaut), 0,8 % (élevée) ou 0,4 % (très élevée) des points changent. Pour un chat, choisir « Élevée » ou « Très élevée » (réglable aussi à distance depuis la liste des caméras du téléphone spectateur). Chaque image est comparée à la précédente (0,5 s) et à celle d’il y a 1,5 s, pour repérer aussi les mouvements lents. Le mode « direct sur mouvement » ne modifie pas la détection. Un saut de luminosité très fort (lumière allumée ou éteinte) compte aussi comme une activité.
+Le détecteur vidéo analyse le flux d’analyse CameraX (640 × 480 visé, pour servir aussi au direct) toutes les 500 ms. Il compare une grille d’environ 40 × 30 points, chacun moyenné sur 2 × 2 pixels pour atténuer le grain. L’écart médian entre deux images est d’abord retiré, ce qui neutralise les variations globales de luminosité (exposition automatique, nuage) ; un point est « modifié » s’il change ensuite de plus de 25 niveaux. Il y a mouvement si au moins 5 % (faible), 2 % (normale, par défaut) ou 0,8 % (élevée) des points changent : une personne qui n’occupe qu’une petite partie du cadre suffit. Un saut de luminosité très fort (lumière allumée ou éteinte) compte aussi comme une activité.
 
 Un clip démarre au premier mouvement détecté. Chaque nouveau mouvement repousse sa fin ; il s’arrête 10 secondes après le dernier mouvement, ou à la durée maximale choisie — si le mouvement continue, un nouveau clip démarre aussitôt. Un seul clip est enregistré à la fois. Le clip commence au moment de la détection : les instants qui la précèdent ne sont pas enregistrés. Option « Déclencher aussi sur le son » : le détecteur sonore lit le microphone en mono à 8 kHz et déclenche sur un niveau RMS fixe ; pendant un clip le micro sert à la piste audio, c’est donc l’absence de mouvement qui termine le clip.
 
@@ -216,11 +216,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.19.0
-git push origin v1.19.0
+git tag v1.18.1
+git push origin v1.18.1
 ```
 
-Remplacer `1.19.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
+Remplacer `1.18.1` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
