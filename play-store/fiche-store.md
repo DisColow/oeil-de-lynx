@@ -27,7 +27,6 @@ DÉTECTION DE MOUVEMENT ET CLIPS
 DIRECT DEPUIS UN AUTRE TÉLÉPHONE
 • Appairage en un instant avec un QR code.
 • Image et son en direct, sur le même Wi-Fi ou depuis Internet via votre box (ouverture automatique du port en UPnP, IPv6, DynDNS).
-• Mode « direct sur mouvement » pour économiser batterie et données.
 • Touchez une zone de l’image pour régler la luminosité dessus, ou réglez l’exposition.
 • Parlez à travers la caméra en maintenant un bouton, comme un talkie-walkie.
 • Consultez et téléchargez les clips de la caméra à distance.
