@@ -32,6 +32,7 @@ class RemoteGalleryActivity : ComponentActivity() {
 
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var downloadRequested = false
+    @Volatile private var loadGeneration = 0
     @Volatile private var pendingThumbs: List<Pair<Clip, ImageView>> = emptyList()
     // Miniatures déjà reçues (≤ 16 Mo), pour ne pas les redemander après un téléchargement.
     private val thumbCache = object : android.util.LruCache<String, Bitmap>(16 * 1024 * 1024) {
@@ -77,9 +78,16 @@ class RemoteGalleryActivity : ComponentActivity() {
     private fun load() {
         status.text = "Connexion à la caméra…"
         list.removeAllViews()
+        // Actualiser : on abandonne le chargement en cours (miniatures) et on repart d’une connexion neuve.
+        // Fermer l’ancienne connexion débloque aussitôt une requête en attente sur le fil de travail.
+        val run = ++loadGeneration
+        pendingThumbs = emptyList()
+        session?.let { old -> session = null; Thread { old.close() }.start() }
         worker.execute {
+            if (run != loadGeneration) return@execute
             try {
                 val gallery = session ?: LiveClient(applicationContext, cameraId, NO_LISTENER).openGallery().also { session = it }
+                if (run != loadGeneration) return@execute // une actualisation plus récente a pris la main
                 val response = gallery.request(mapOf("op" to "list"))
                 if (response.type != LiveProtocol.TYPE_LIST) throw java.io.IOException("Réponse inattendue de la caméra")
                 val clips = String(response.payload, Charsets.UTF_8).lines().filter { it.isNotBlank() }.map { line ->
@@ -87,10 +95,13 @@ class RemoteGalleryActivity : ComponentActivity() {
                     Clip(fields["id"].orEmpty(), fields["name"].orEmpty(), fields["start"]?.toLongOrNull() ?: 0L,
                         fields["dur"]?.toLongOrNull() ?: 0L, fields["size"]?.toLongOrNull() ?: 0L)
                 }
+                if (run != loadGeneration) return@execute
                 val thumbs = runOnUiThreadAndGet { showClips(clips) }
                 pendingThumbs = clips.zip(thumbs)
                 fetchThumbnails()
             } catch (error: Exception) {
+                // Connexion fermée volontairement par une actualisation : pas un échec à afficher.
+                if (run != loadGeneration) return@execute
                 session?.close(); session = null
                 runOnUiThread {
                     if (!isDestroyed) status.text = "Caméra injoignable : ${error.message ?: "erreur réseau"}\n" +
@@ -106,8 +117,9 @@ class RemoteGalleryActivity : ComponentActivity() {
      */
     private fun fetchThumbnails() {
         val gallery = session ?: return
+        val run = loadGeneration
         for ((clip, view) in pendingThumbs) {
-            if (downloadRequested || isDestroyed) return
+            if (downloadRequested || isDestroyed || run != loadGeneration) return
             val cached = thumbCache.get(clip.id)
             if (cached != null) { runOnUiThread { view.setImageBitmap(cached) }; continue }
             val reply = try { gallery.request(mapOf("op" to "thumb", "id" to clip.id)) } catch (_: Exception) { return }

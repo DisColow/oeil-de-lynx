@@ -436,7 +436,8 @@ class MonitorService : LifecycleService() {
                         val x = request["x"]?.toFloatOrNull(); val y = request["y"]?.toFloatOrNull()
                         val zone = if (request["reset"] == "1" || x == null || y == null) null else x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setMetering(zone) }
-                    } else if (request["op"] == "alarm" || request["op"] == "sound") {
+                    } else if (request["op"] in setOf("alarm", "sound", "standby", "threshold")) {
+                        // Mêmes commandes que depuis la liste des caméras (veille / reprise comprises).
                         control(request)
                     }
                 },
