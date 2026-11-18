@@ -507,11 +507,7 @@ class MainActivity : ComponentActivity() {
     /** Part de l’image qui doit bouger : élevée = petit mouvement suffit, faible = moins de fausses alertes. */
     private fun showSensitivity() {
         val levels = MotionDetector.Sensitivity.entries
-        val labels = arrayOf(
-            "Faible · grands mouvements seulement",
-            "Normale · une personne dans la pièce",
-            "Élevée · petits mouvements, plus de fausses alertes"
-        )
+        val labels = levels.map { "${it.label} · ${it.hint}" }.toTypedArray()
         AlertDialog.Builder(this).setTitle("Sensibilité au mouvement")
             .setSingleChoiceItems(labels, levels.indexOf(MonitorService.motionSensitivity(this))) { dialog, which ->
                 prefs.edit().putString(MonitorService.PREF_SENSITIVITY, levels[which].name).apply(); dialog.dismiss()
