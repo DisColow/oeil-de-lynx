@@ -135,9 +135,6 @@ class ViewerActivity : ComponentActivity() {
                 if (asleep) "Toucher pour reprendre la surveillance" else "Toucher pour mettre en veille et économiser la batterie", chevron = false) {
                 sendControl(camera.id, mapOf("op" to "standby", "value" to if (asleep) "0" else "1"))
             })
-            val sensitivity = MotionDetector.Sensitivity.entries.firstOrNull { it.name == state["sens"] }
-            if (sensitivity != null) card.addView(LynxUi.row(this, R.drawable.ic_motion, "Sensibilité au mouvement",
-                "${sensitivity.label} · ${sensitivity.hint}") { chooseSensitivity(camera, sensitivity) })
             card.addView(LynxUi.row(this, R.drawable.ic_timer, "Veille automatique",
                 if (threshold == 0) "Désactivée" else "Sous $threshold % de batterie, reprise au branchement") {
                 chooseThreshold(camera, threshold)
@@ -150,16 +147,6 @@ class ViewerActivity : ComponentActivity() {
             if (alarmOn) sendControl(camera.id, mapOf("op" to "alarm", "value" to "0"))
             else confirmAlarm(camera)
         }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), dp(14)) })
-    }
-
-    /** Sensibilité réglée à distance : pour un chat, « Élevée » ou « Très élevée ». */
-    private fun chooseSensitivity(camera: PairingCode, current: MotionDetector.Sensitivity) {
-        val levels = MotionDetector.Sensitivity.entries
-        AlertDialog.Builder(this).setTitle("Sensibilité de ${camera.name}")
-            .setSingleChoiceItems(levels.map { "${it.label} · ${it.hint}" }.toTypedArray(), levels.indexOf(current)) { dialog, which ->
-                dialog.dismiss()
-                sendControl(camera.id, mapOf("op" to "sensitivity", "value" to levels[which].name))
-            }.setNegativeButton("Fermer", null).show()
     }
 
     private fun chooseThreshold(camera: PairingCode, current: Int) {

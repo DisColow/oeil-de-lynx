@@ -84,10 +84,6 @@ internal class LiveClient(
         }
     @Volatile private var player: AudioPlayer? = null
 
-    /** Direct « sur mouvement » : la caméra n’envoie d’images que pendant un mouvement. */
-    @Volatile var motionOnly = false
-        set(value) { field = value; sendRequest(mapOf("op" to "motiononly", "value" to if (value) "1" else "0")) }
-
     /**
      * Lecture du son sur son propre thread : l’écriture dans AudioTrack bloque, elle ne doit pas
      * retarder la réception des images. File courte : en cas de retard, les morceaux anciens sont jetés.
@@ -179,16 +175,13 @@ internal class LiveClient(
 
     private val requests = Executors.newSingleThreadExecutor { task -> Thread(task, "lynx-live-requests").apply { isDaemon = true } }
 
-    /** Coupe la connexion en cours : elle se rouvre aussitôt et renvoie l’état voulu (son, mode du direct). */
-    fun reconnect() { try { socket?.close() } catch (_: IOException) { } }
-
     /** Connexion de galerie : requêtes/réponses synchrones (bloquant, hors du thread principal). */
     class GallerySession internal constructor(private val socket: Socket, private val channel: SecureChannel) : java.io.Closeable {
         @Synchronized fun request(fields: Map<String, String>): LiveRecord {
             channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(fields).toByteArray(Charsets.UTF_8))
             val record = channel.receive()
             // Une caméra en version antérieure à 1.7.0 envoie le direct au lieu de répondre.
-            val controlOp = fields["op"] in setOf("settings", "alarm", "sound", "standby", "threshold", "sensitivity")
+            val controlOp = fields["op"] in setOf("settings", "alarm", "sound", "standby", "threshold")
             if (record.type == LiveProtocol.TYPE_FRAME || record.type == LiveProtocol.TYPE_KEEPALIVE ||
                 (record.type == LiveProtocol.TYPE_STATUS && !controlOp)) {
                 throw IOException("Mets à jour Œil de Lynx sur le téléphone caméra pour accéder à sa galerie.")
@@ -400,8 +393,7 @@ internal class LiveClient(
                 BufferedInputStream(socket.getInputStream(), 64 * 1024), BufferedOutputStream(socket.getOutputStream()), camera.key
             )
             // À partir d’ici, la caméra a répondu : une fermeture immédiate signifie qu’elle refuse notre clé.
-            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode, "audio" to if (audioEnabled && mode == "live") "1" else "0",
-                "motiononly" to if (motionOnly) "1" else "0"))
+            val auth = LiveProtocol.encodeFields(mapOf("name" to (Build.MODEL ?: "Spectateur"), "mode" to mode, "audio" to if (audioEnabled && mode == "live") "1" else "0"))
             channel.send(LiveProtocol.TYPE_AUTH, auth.toByteArray(Charsets.UTF_8))
             val hello = try { channel.receive() } catch (error: EOFException) { throw KeyRejected() } catch (error: java.net.SocketException) { throw KeyRejected() }
             if (hello.type != LiveProtocol.TYPE_HELLO) throw IOException("Réponse inattendue de la caméra")

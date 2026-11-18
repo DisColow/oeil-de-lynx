@@ -68,12 +68,6 @@ internal class LiveServer(
     val viewerCount get() = viewers.count { !it.alertsOnly }
     fun hasViewers() = viewers.any { !it.alertsOnly }
 
-    /**
-     * Vrai si une image doit être encodée maintenant : un spectateur en direct continu, ou en mode
-     * « sur mouvement » pendant un mouvement, ou qui attend sa première image (aperçu de la scène).
-     */
-    fun wantsFrame(motionActive: Boolean) = viewers.any { !it.alertsOnly && (!it.motionOnly || motionActive || it.needsFirstFrame) }
-
     /** Ouvre le port d’écoute (IPv4 et IPv6). Renvoie faux si le port est déjà pris. */
     fun start(): Boolean {
         if (running) return true
@@ -106,14 +100,12 @@ internal class LiveServer(
     /** Déconnecte tous les spectateurs (ex. après un changement de clé d’appairage). */
     fun disconnectAll() = viewers.forEach { it.close() }
 
-    fun publishFrame(jpeg: ByteArray, rotationDegrees: Int, motionActive: Boolean = true) {
+    fun publishFrame(jpeg: ByteArray, rotationDegrees: Int) {
         if (!hasViewers()) return
         val payload = ByteArray(jpeg.size + 2)
         payload[0] = (rotationDegrees shr 8).toByte(); payload[1] = rotationDegrees.toByte()
         System.arraycopy(jpeg, 0, payload, 2, jpeg.size)
-        viewers.forEach {
-            if (!it.alertsOnly && (!it.motionOnly || motionActive || it.needsFirstFrame)) { it.needsFirstFrame = false; it.offerFrame(payload) }
-        }
+        viewers.forEach { if (!it.alertsOnly) it.offerFrame(payload) }
     }
 
     fun publishStatus(status: Map<String, String>) {
@@ -162,7 +154,6 @@ internal class LiveServer(
             channel.send(LiveProtocol.TYPE_HELLO, LiveProtocol.encodeFields(helloProvider()).toByteArray(Charsets.UTF_8))
             viewer = Viewer(socket, channel, fields["name"].orEmpty().take(60), alertsOnly)
             viewer.wantsAudio = !alertsOnly && fields["audio"] == "1"
-            viewer.motionOnly = fields["motiononly"] == "1"
         } catch (error: Exception) {
             // Mauvaise clé, scanner de ports ou connexion coupée : rien n’est envoyé en clair.
             Log.w(TAG, "Live handshake rejected from ${socket.inetAddress?.hostAddress}: ${error.message}")
@@ -199,9 +190,6 @@ internal class LiveServer(
         // Son : petite file (≈ 1 s) ; au-delà, les morceaux les plus anciens sont jetés pour rester en direct.
         private val audio = ArrayDeque<ByteArray>()
         @Volatile var wantsAudio = false
-        // Mode « direct sur mouvement » : images seulement pendant un mouvement (plus une à la connexion).
-        @Volatile var motionOnly = false
-        @Volatile var needsFirstFrame = true
         @Volatile var sendingSince = 0L
 
         fun offerFrame(payload: ByteArray) = synchronized(lock) { frame = payload; lock.notifyAll() }
@@ -249,10 +237,6 @@ internal class LiveServer(
                     if (record.type == LiveProtocol.TYPE_REQUEST) {
                         val request = LiveProtocol.decodeFields(String(record.payload, Charsets.UTF_8))
                         // Son activé ou coupé par ce spectateur : géré ici, propre à sa connexion.
-                        if (request["op"] == "motiononly") {
-                            motionOnly = request["value"] == "1"
-                            continue
-                        }
                         if (request["op"] == "audio") {
                             wantsAudio = !alertsOnly && request["value"] == "1"
                             if (!wantsAudio) synchronized(lock) { audio.clear() }
@@ -298,7 +282,7 @@ internal class LiveServer(
                         }
                         channel.send(LiveProtocol.TYPE_END)
                     }
-                    "settings", "alarm", "sound", "standby", "threshold", "sensitivity" ->
+                    "settings", "alarm", "sound", "standby", "threshold" ->
                         channel.send(LiveProtocol.TYPE_STATUS, LiveProtocol.encodeFields(onControl(request)).toByteArray(Charsets.UTF_8))
                     else -> channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
                 }

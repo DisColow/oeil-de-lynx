@@ -67,8 +67,6 @@ class MonitorService : LifecycleService() {
     @Volatile private var startingRecording = false
     // Échantillons de luminance de la précédente image analysée, comparés à la suivante.
     private var previousLuma: ByteArray? = null
-    // Échantillons des dernières analyses (≈ 1,5 s), pour repérer les mouvements lents.
-    private val olderLuma = ArrayDeque<ByteArray>()
     private var lastFrameAt = 0L
     private var recordingSince = 0L
     private var maxClipMs = 10 * 60_000L
@@ -234,7 +232,6 @@ class MonitorService : LifecycleService() {
         useFrontCamera = frontCamera
         getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean("front_camera", frontCamera).apply()
         previousLuma = null
-        synchronized(olderLuma) { olderLuma.clear() }
         lastFrameAt = 0L
         lastMotionAt = 0L
         lastSoundAt = 0L
@@ -262,12 +259,10 @@ class MonitorService : LifecycleService() {
         try {
             // Le direct n’encode des JPEG que si un spectateur est connecté, à cadence limitée.
             val server = liveServer
-            // Mouvement en cours : clip en enregistrement ou mouvement détecté il y a moins de 3 s.
-            val motionActive = recording != null || (lastMotionAt > 0 && now - lastMotionAt < MOTION_LIVE_WINDOW_MS)
-            if (server != null && server.wantsFrame(motionActive) && now - lastLiveFrameAt >= LIVE_FRAME_INTERVAL_MS) {
+            if (server != null && server.hasViewers() && now - lastLiveFrameAt >= LIVE_FRAME_INTERVAL_MS) {
                 lastLiveFrameAt = now
                 try {
-                    liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees, motionActive) }
+                    liveEncoder.encode(image, LIVE_JPEG_QUALITY)?.let { server.publishFrame(it, image.imageInfo.rotationDegrees) }
                 } catch (error: Exception) { Log.w(TAG, "Live frame encoding failed", error) }
             }
             // Analyse au plus une image toutes les 500 ms pour limiter le processeur.
@@ -295,17 +290,7 @@ class MonitorService : LifecycleService() {
             }
             val currentSamples = samples.copyOf(sampleCount)
             val previous = previousLuma
-            val sensitivity = motionSensitivity(this)
-            // Deux comparaisons : avec l’image d’il y a 0,5 s (mouvements vifs) et avec celle d’il y a
-            // ~1,5 s (mouvements lents, comme un chat qui avance doucement, peu visibles d’une image à l’autre).
-            val older = synchronized(olderLuma) { olderLuma.firstOrNull() }
-            val moved = (previous != null && MotionDetector.hasMotion(currentSamples, previous, sensitivity)) ||
-                (older != null && MotionDetector.hasMotion(currentSamples, older, sensitivity))
-            synchronized(olderLuma) {
-                olderLuma.addLast(currentSamples)
-                while (olderLuma.size > SLOW_MOTION_FRAMES) olderLuma.removeFirst()
-            }
-            if (moved) {
+            if (previous != null && MotionDetector.hasMotion(currentSamples, previous, motionSensitivity(this))) {
                 lastMotionAt = now
                 triggerRecording("Mouvement")
             }
@@ -569,8 +554,7 @@ class MonitorService : LifecycleService() {
         "chg" to if (batteryCharging) "1" else "0",
         "standby" to if (standby) "1" else "0",
         "standbywhy" to standbyReason,
-        "thr" to standbyThreshold().toString(),
-        "sens" to motionSensitivity(this).name
+        "thr" to standbyThreshold().toString()
     )
 
     @Volatile private var batteryLevel = -1
@@ -602,9 +586,6 @@ class MonitorService : LifecycleService() {
                     "alarm" -> if (on) startSiren() else stopSiren()
                     "standby" -> if (on) enterStandby(REASON_REMOTE) else exitStandby()
                     "threshold" -> request["value"]?.toIntOrNull()?.let { setStandbyThreshold(it) }
-                    "sensitivity" -> MotionDetector.Sensitivity.entries.firstOrNull { it.name == request["value"] }?.let {
-                        getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putString(PREF_SENSITIVITY, it.name).apply()
-                    }
                     "sound" -> setSoundTrigger(on)
                 }
             }
@@ -695,7 +676,6 @@ class MonitorService : LifecycleService() {
         try { cameraProvider?.unbindAll() } catch (_: Exception) { }
         boundCamera = null; analysisUseCase = null; videoCapture = null; activePreview = null
         previousLuma = null
-        synchronized(olderLuma) { olderLuma.clear() }
         Log.i(TAG, "Standby ($reason)")
         updateStatus(standbyText())
         publishLiveStatus()
@@ -824,7 +804,6 @@ class MonitorService : LifecycleService() {
         private const val NOTIFICATION_ID = 42
         private const val TAG = "LynxMonitor"
         private const val ANALYSIS_INTERVAL_MS = 500L
-        private const val SLOW_MOTION_FRAMES = 3
         // Durée sans mouvement avant de terminer le clip.
         private const val STOP_AFTER_STILL_MS = 10_000L
         const val PREF_SOUND_TRIGGER = "sound_trigger"
@@ -837,7 +816,6 @@ class MonitorService : LifecycleService() {
         // Direct : environ 8 images/s en JPEG qualité 60, soit ~2 à 3 Mbit/s en 640 × 480.
         private const val LIVE_FRAME_INTERVAL_MS = 120L
         private const val LIVE_JPEG_QUALITY = 60
-        private const val MOTION_LIVE_WINDOW_MS = 3_000L
         // Seuils relevés du différentiel d’images pour limiter les fausses détections de mouvement.
     }
 }
