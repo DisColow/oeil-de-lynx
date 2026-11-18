@@ -138,7 +138,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         bottom.addView(motion.first, LinearLayout.LayoutParams(0, -2, 1f))
 
         // Mode « sur mouvement » sans mouvement : bandeau au-dessus de la dernière image reçue.
-        motionWaiting = LynxUi.chip(this, "Direct sur mouvement · en attente d’un mouvement", LynxUi.WARNING, 0xcc101713.toInt()).first.apply { visibility = View.GONE }
+        motionWaiting = LynxUi.chip(this, "En attente d’un mouvement · « Sur mouvement » pour revenir au continu", LynxUi.WARNING, 0xcc101713.toInt()).first.apply { visibility = View.GONE }
         root.addView(motionWaiting, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(104) })
         panel.addView(bottom, LinearLayout.LayoutParams(-1, -2))
         root.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -443,6 +443,14 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         viewerPrefs.edit().putBoolean("motiononly_$cameraKey", on).apply()
         client?.motionOnly = on
         renderMotionOnly()
+        if (!on) {
+            // Retour au direct continu : si aucune image n’arrive vite, on se reconnecte
+            // (la connexion annonce alors le bon mode à la caméra, même si la commande s’est perdue).
+            val askedAt = android.os.SystemClock.elapsedRealtime()
+            motionWaiting.postDelayed({
+                if (!motionOnly && !isDestroyed && lastFrameAt < askedAt) client?.reconnect()
+            }, 3_000)
+        }
         Toast.makeText(this, if (on) "Direct sur mouvement : images seulement quand la caméra détecte un mouvement." else "Direct continu.", Toast.LENGTH_SHORT).show()
     }
 
