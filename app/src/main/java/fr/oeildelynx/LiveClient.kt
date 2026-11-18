@@ -170,10 +170,17 @@ internal class LiveClient(
     /** Envoie une commande à la caméra (ex. exposition) si la connexion est ouverte. */
     fun sendRequest(fields: Map<String, String>) {
         val channel = activeChannel ?: return
-        Thread {
+        // File unique : les commandes arrivent dans l’ordre où l’utilisateur les a données
+        // (avant, un fil par commande : deux appuis rapprochés pouvaient arriver inversés).
+        requests.execute {
             try { channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(fields).toByteArray(Charsets.UTF_8)) } catch (_: IOException) { }
-        }.start()
+        }
     }
+
+    private val requests = Executors.newSingleThreadExecutor { task -> Thread(task, "lynx-live-requests").apply { isDaemon = true } }
+
+    /** Coupe la connexion en cours : elle se rouvre aussitôt et renvoie l’état voulu (son, mode du direct). */
+    fun reconnect() { try { socket?.close() } catch (_: IOException) { } }
 
     /** Connexion de galerie : requêtes/réponses synchrones (bloquant, hors du thread principal). */
     class GallerySession internal constructor(private val socket: Socket, private val channel: SecureChannel) : java.io.Closeable {
