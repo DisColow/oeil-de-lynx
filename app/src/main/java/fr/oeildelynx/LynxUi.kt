@@ -100,6 +100,23 @@ internal object LynxUi {
         }
     }
 
+    /**
+     * Flèches semi-transparentes sur les bords gauche et droit du lecteur pour passer d’un clip à l’autre.
+     * Une flèche n’apparaît que s’il y a un clip de ce côté.
+     */
+    fun clipArrows(context: Context, stage: android.widget.FrameLayout, hasPrevious: Boolean, hasNext: Boolean,
+                   onPrevious: () -> Unit, onNext: () -> Unit) {
+        fun arrow(description: String, start: Boolean, action: () -> Unit) =
+            iconButton(context, R.drawable.ic_chevron_right, description, 0x8c0b110e.toInt(), 52) { action() }.apply {
+                if (start) rotation = 180f
+            }
+        val margin = dp(context, 8)
+        if (hasPrevious) stage.addView(arrow("Clip précédent (plus récent)", true, onPrevious),
+            android.widget.FrameLayout.LayoutParams(dp(context, 52), dp(context, 52), Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = margin })
+        if (hasNext) stage.addView(arrow("Clip suivant (plus ancien)", false, onNext),
+            android.widget.FrameLayout.LayoutParams(dp(context, 52), dp(context, 52), Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = margin })
+    }
+
     enum class Style { PRIMARY, SECONDARY, DANGER }
 
     /** Bouton pleine largeur ; la couleur historique choisit le style (accent, carte, danger). */
