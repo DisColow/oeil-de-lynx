@@ -151,7 +151,7 @@ class ViewerActivity : ComponentActivity() {
                     setPadding(dp(16), dp(12), dp(12), dp(12))
                     background = LynxUi.pressable(this@ViewerActivity, 0x00000000, 20)
                     contentDescription = "Alarme automatique"
-                    setOnClickListener { AutoAlarmUi.chooseMode(this@ViewerActivity, camera.name, state) { sendControls(camera.id, it) } }
+                    setOnClickListener { AutoAlarmUi.chooseMode(this@ViewerActivity, camera.name, state, { pickCustomSound(camera) }) { sendControls(camera.id, it) } }
                 }
                 autoRow.addView(LynxUi.icon(this, R.drawable.ic_shield, if (on) LynxUi.DANGER else LynxUi.MUTED, 22))
                 autoRow.addView(LinearLayout(this).apply {
@@ -167,8 +167,8 @@ class ViewerActivity : ComponentActivity() {
                 card.addView(autoRow)
                 if (on) card.addView(LynxUi.row(this, R.drawable.ic_volume, "Son de l’alarme automatique",
                     MonitorService.autoAlarmSoundLabel(state["aas"] ?: MonitorService.SIREN)) {
-                    AutoAlarmUi.chooseSound(this, camera.name, state["aas"] ?: MonitorService.SIREN) { picked ->
-                        picked?.let { sendControl(camera.id, mapOf("op" to "autoalarmsound", "value" to it)) }
+                    AutoAlarmUi.chooseSound(this, camera.name, state, { pickCustomSound(camera) }) { picked ->
+                        picked?.let { sendControls(camera.id, listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
                     }
                 })
                 // Le compte à rebours d’armement se met à jour une fois écoulé.
@@ -198,8 +198,23 @@ class ViewerActivity : ComponentActivity() {
             }.setNegativeButton("Fermer", null).show()
     }
 
-    private fun sendControls(cameraId: String, requests: List<Map<String, String>>) {
-        if (requests.isNotEmpty()) sendControl(cameraId, requests.first(), then = requests.drop(1))
+    /** Comme [sendControl], mais attend (jusqu’à ~10 s) qu’une commande précédente soit terminée au lieu de l’ignorer. */
+    private fun sendControls(cameraId: String, requests: List<Map<String, String>>, attempt: Int = 0) {
+        if (requests.isEmpty()) return
+        if (cameraId in pending && attempt < 20) { list.postDelayed({ if (!isDestroyed) sendControls(cameraId, requests, attempt + 1) }, 500); return }
+        sendControl(cameraId, requests.first(), then = requests.drop(1))
+    }
+
+    private val customSound = CustomSoundUi(this)
+
+    /** Enregistre ou importe un son sur ce téléphone, l’envoie à la caméra et le choisit pour l’alarme. */
+    private fun pickCustomSound(camera: PairingCode) {
+        customSound.open("Son personnalisé · ${camera.name}") { bytes, result ->
+            AutoAlarmUi.uploadCustom(this, camera.id, bytes) { state, error ->
+                runOnUiThread { if (state != null && !isDestroyed) { remoteState[camera.id] = state; refresh() } }
+                result(error)
+            }
+        }
     }
 
     private fun confirmAlarm(camera: PairingCode) {

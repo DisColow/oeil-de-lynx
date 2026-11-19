@@ -43,7 +43,9 @@ internal class LiveServer(
     /** Voix d’un spectateur à jouer sur le haut-parleur de la caméra (thread réseau). */
     private val onTalk: (ByteArray) -> Unit = {},
     /** Commandes de la liste des caméras (sirène, détection du son) : renvoie l’état à jour. */
-    private val onControl: (Map<String, String>) -> Map<String, String> = { emptyMap() }
+    private val onControl: (Map<String, String>) -> Map<String, String> = { emptyMap() },
+    /** Son personnalisé de l’alarme envoyé par un spectateur : renvoie l’état, ou lève une erreur lisible. */
+    private val onCustomSound: (ByteArray) -> Map<String, String> = { throw IOException("Non pris en charge") }
 ) {
     @Volatile private var audioDemand = false
 
@@ -284,6 +286,17 @@ internal class LiveServer(
                     }
                     "settings", "alarm", "sound", "standby", "threshold", "autoalarm", "autoalarmsound" ->
                         channel.send(LiveProtocol.TYPE_STATUS, LiveProtocol.encodeFields(onControl(request)).toByteArray(Charsets.UTF_8))
+                    "customsound" -> {
+                        // Le fichier suit la requête, en un seul enregistrement (3 Mo au plus).
+                        val data = channel.receive()
+                        val reply = try {
+                            if (data.type != LiveProtocol.TYPE_CHUNK) throw IOException("Fichier manquant")
+                            LiveProtocol.TYPE_STATUS to LiveProtocol.encodeFields(onCustomSound(data.payload)).toByteArray(Charsets.UTF_8)
+                        } catch (error: Exception) {
+                            LiveProtocol.TYPE_ERROR to (error.message ?: "Son refusé").toByteArray(Charsets.UTF_8)
+                        }
+                        channel.send(reply.first, reply.second)
+                    }
                     else -> channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
                 }
             }

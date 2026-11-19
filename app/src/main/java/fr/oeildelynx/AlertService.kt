@@ -67,7 +67,21 @@ class AlertService : Service() {
             val asleep = fields["standby"] == "1"
             if (asleep && standby == false && fields["standbywhy"] == MonitorService.REASON_BATTERY) notifyStandby(cameraId, fields["bat"])
             standby = asleep
+            // Alarme automatique de la caméra en train de sonner : notification avec « Arrêter ».
+            val ringing = fields["aaring"] == "1"
+            val seq = fields["aaseq"]
+            val wanted = cameraId in ViewerStore.alertCameras(this@AlertService)
+            if (ringing && seq != null && seq != alarmSeq) {
+                alarmSeq = seq
+                if (wanted) { alarmShown = true; notifyAutoAlarm(this@AlertService, cameraId, fields["aawhy"].orEmpty()) }
+            } else if (!ringing && alarmShown) {
+                alarmShown = false
+                notifyAlarmEnded(this@AlertService, cameraId, stoppedHere = false)
+            }
         }
+
+        @Volatile var alarmSeq: String? = null
+        @Volatile var alarmShown = false
 
         @Volatile var standby: Boolean? = null
         @Volatile var lastClip: String? = null
@@ -286,7 +300,7 @@ class AlertService : Service() {
 
     companion object {
         private const val CHANNEL_ONGOING = "lynx-viewer-link"
-        private const val CHANNEL_ALERTS = "lynx-viewer-alerts"
+        internal const val CHANNEL_ALERTS = "lynx-viewer-alerts"
         private const val ONGOING_ID = 77
         private const val LOST_ALERT_MS = 180_000L
         private const val LOW_BATTERY = 15
@@ -302,6 +316,49 @@ class AlertService : Service() {
             override fun onStatus(fields: Map<String, String>) {}
         }
 
+        internal fun alarmId(cameraId: String) = 280_000 + (cameraId.hashCode() and 0xffff)
+
+        /** Alarme automatique déclenchée sur la caméra : notification prioritaire avec un bouton « Arrêter ». */
+        internal fun notifyAutoAlarm(context: Context, cameraId: String, why: String) {
+            val name = ViewerStore.find(context, cameraId)?.name ?: "Caméra"
+            val stop = PendingIntent.getBroadcast(context, alarmId(cameraId),
+                Intent(context, AlarmStopReceiver::class.java).putExtra(AlarmStopReceiver.EXTRA_CAMERA, cameraId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val live = PendingIntent.getActivity(context, cameraId.hashCode(),
+                Intent(context, LiveActivity::class.java).putExtra(LiveActivity.EXTRA_CAMERA_ID, cameraId)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.FRANCE).format(java.util.Date())
+            postStatic(context, alarmId(cameraId), NotificationCompat.Builder(context, CHANNEL_ALERTS)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle("Alarme déclenchée · $name")
+                .setContentText("${why.ifBlank { "Détection" }} à $time. « Arrêter » coupe le son sans désactiver l’alarme.")
+                .setCategory(NotificationCompat.CATEGORY_ALARM).setPriority(NotificationCompat.PRIORITY_HIGH)
+                .addAction(android.R.drawable.ic_media_pause, "Arrêter l’alarme", stop)
+                .setContentIntent(live).setAutoCancel(true).build())
+        }
+
+        internal fun notifyAlarmEnded(context: Context, cameraId: String, stoppedHere: Boolean, error: String? = null) {
+            val name = ViewerStore.find(context, cameraId)?.name ?: "Caméra"
+            val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.FRANCE).format(java.util.Date())
+            val builder = NotificationCompat.Builder(context, CHANNEL_ALERTS)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setOnlyAlertOnce(true).setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+            when {
+                error != null -> builder.setContentTitle("Impossible d’arrêter l’alarme · $name").setContentText(error)
+                    .addAction(android.R.drawable.ic_media_pause, "Réessayer", PendingIntent.getBroadcast(context, alarmId(cameraId),
+                        Intent(context, AlarmStopReceiver::class.java).putExtra(AlarmStopReceiver.EXTRA_CAMERA, cameraId),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                stoppedHere -> builder.setContentTitle("Alarme arrêtée · $name").setContentText("Arrêtée à $time. Toujours active : elle pourra resonner dans 1 minute si ça bouge encore.")
+                else -> builder.setContentTitle("Alarme terminée · $name").setContentText("Le son s’est arrêté à $time. L’alarme reste active.")
+            }
+            postStatic(context, alarmId(cameraId), builder.build())
+        }
+
+        private fun postStatic(context: Context, id: Int, notification: Notification) {
+            try { context.getSystemService(NotificationManager::class.java).notify(id, notification) } catch (_: SecurityException) { }
+        }
+
         /** Démarre, met à jour ou arrête le service selon les caméras dont les alertes ou la réception des clips sont activées. */
         fun sync(context: Context) {
             val intent = Intent(context, AlertService::class.java)
@@ -309,6 +366,28 @@ class AlertService : Service() {
             else try { ContextCompat.startForegroundService(context, intent) } catch (_: Exception) { }
         }
     }
+}
+
+/** Bouton « Arrêter l’alarme » d’une notification : coupe le son sur la caméra sans désactiver l’alarme. */
+class AlarmStopReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val cameraId = intent.getStringExtra(EXTRA_CAMERA) ?: return
+        val pending = goAsync()
+        Thread {
+            try {
+                LiveClient(context.applicationContext, cameraId, object : LiveClient.Listener {
+                    override fun onState(text: String, connected: Boolean) {}
+                    override fun onFrame(bitmap: Bitmap) = bitmap.recycle()
+                    override fun onStatus(fields: Map<String, String>) {}
+                }).control(mapOf("op" to "alarm", "value" to "0"))
+                AlertService.notifyAlarmEnded(context, cameraId, stoppedHere = true)
+            } catch (error: Exception) {
+                AlertService.notifyAlarmEnded(context, cameraId, stoppedHere = false, error = error.message ?: "Caméra injoignable.")
+            } finally { pending.finish() }
+        }.start()
+    }
+
+    companion object { const val EXTRA_CAMERA = "camera_id" }
 }
 
 /** Relance les alertes après un redémarrage du téléphone spectateur. */

@@ -151,6 +151,35 @@ class LiveProtocolTest {
         }
     }
 
+    @Test fun customAlarmSoundIsUploadedInOneRecord() {
+        val key = LiveProtocol.newKey()
+        val sound = ByteArray(2_500_000) { (it % 247).toByte() }
+        ServerSocket(0).use { listener ->
+            val pool = Executors.newSingleThreadExecutor()
+            val camera = pool.submit {
+                listener.accept().use { socket ->
+                    val channel = LiveProtocol.serverHandshake(socket.getInputStream(), socket.getOutputStream(), key)
+                    assertEquals("customsound", LiveProtocol.decodeFields(String(channel.receive().payload))["op"])
+                    val data = channel.receive()
+                    assertEquals(LiveProtocol.TYPE_CHUNK, data.type)
+                    assertArrayEquals(sound, data.payload)
+                    channel.send(LiveProtocol.TYPE_STATUS, "aac=1".toByteArray())
+                    // Caméra trop ancienne : requête inconnue, message clair côté spectateur.
+                    channel.receive(); channel.receive()
+                    channel.send(LiveProtocol.TYPE_ERROR, "Requête inconnue".toByteArray())
+                }
+            }
+            Socket("127.0.0.1", listener.localPort).use { socket ->
+                socket.soTimeout = 5000
+                val channel = LiveProtocol.clientHandshake(socket.getInputStream(), socket.getOutputStream(), key)
+                val session = LiveClient.GallerySession(socket, channel)
+                assertEquals("1", session.uploadSound(sound)["aac"])
+                try { session.uploadSound(ByteArray(10)); fail() } catch (error: IOException) { assertTrue(error.message!!.contains("1.25.0")) }
+            }
+            camera.get(5, TimeUnit.SECONDS); pool.shutdownNow()
+        }
+    }
+
     @Test fun mergedHostsPreferFreshAddresses() {
         assertEquals(listOf("b:1", "a:1", "c:1"), ViewerStore.mergeHosts(listOf("b:1", "a:1"), listOf("a:1", "c:1")))
     }
