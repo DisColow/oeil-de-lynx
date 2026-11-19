@@ -230,6 +230,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         meterMarker.animate().alpha(.35f).setStartDelay(1500).setDuration(600).start()
         Toast.makeText(this, "Luminosité réglée sur cette zone · ☀ › Auto pour annuler", Toast.LENGTH_SHORT).show()
     }
+    private val customSound = CustomSoundUi(this)
     private lateinit var alarmIcon: ImageView
     private lateinit var alarmLabel: TextView
 
@@ -249,6 +250,11 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         if (status["aa"] != null) {
             val on = AutoAlarmUi.isOn(status)
             AutoAlarmUi.remember(this, cameraId, status["aa"])
+            val onCustom = {
+                customSound.open("Son personnalisé · $name") { bytes, result ->
+                    AutoAlarmUi.uploadCustom(this, cameraId, bytes) { _, error -> result(error) }
+                }
+            }
             val next = AutoAlarmUi.lastMode(this, cameraId)
             items += LynxUi.SheetItem(R.drawable.ic_shield, if (on) "Désactiver l’alarme automatique" else "Activer l’alarme automatique",
                 if (on) AutoAlarmUi.summary(status) else "${MonitorService.AUTO_ALARM_LABELS[next]} · s’arme 1 minute après") {
@@ -256,10 +262,10 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
                 Toast.makeText(this, if (on) "Alarme automatique désactivée." else "Alarme automatique activée : elle s’arme dans 1 minute.", Toast.LENGTH_LONG).show()
             }
             items += LynxUi.SheetItem(R.drawable.ic_tune, "Déclencheur de l’alarme automatique",
-                MonitorService.AUTO_ALARM_LABELS[status["aa"]] ?: "Désactivée") { AutoAlarmUi.chooseMode(this, name, status, send) }
+                MonitorService.AUTO_ALARM_LABELS[status["aa"]] ?: "Désactivée") { AutoAlarmUi.chooseMode(this, name, status, onCustom, send) }
             items += LynxUi.SheetItem(R.drawable.ic_volume, "Son de l’alarme automatique",
                 MonitorService.autoAlarmSoundLabel(status["aas"] ?: MonitorService.SIREN)) {
-                AutoAlarmUi.chooseSound(this, name, status["aas"] ?: MonitorService.SIREN) { picked ->
+                AutoAlarmUi.chooseSound(this, name, status, onCustom) { picked ->
                     picked?.let { send(listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
                 }
             }
@@ -291,7 +297,10 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(14) })
         box.addView(LynxUi.title(this, "Sons sur la caméra", 18f))
         box.addView(LynxUi.body(this, "Joués au volume maximum, même en silencieux. Toucher pour jouer.", 12.5f).apply { setPadding(0, dp(4), 0, dp(12)) })
-        val effects = DeterrentSounds.Effect.entries
+        // Sons intégrés, plus le son personnalisé de la caméra s’il y en a un.
+        class Tile(val id: String, val label: String, val description: String)
+        val effects = DeterrentSounds.Effect.entries.map { Tile(it.id, it.label, it.description) } +
+            (if (lastStatus["aac"] == "1") listOf(Tile(CustomAlarmSound.ID, CustomAlarmSound.LABEL, "Ton message ou ton fichier audio")) else emptyList())
         effects.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEach { effect ->

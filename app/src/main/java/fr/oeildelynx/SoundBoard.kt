@@ -17,12 +17,26 @@ internal class SoundBoard(private val context: Context) {
     private val cache = mutableMapOf<DeterrentSounds.Effect, ShortArray>()
     @Volatile private var current: AudioTrack? = null
 
-    fun play(effect: DeterrentSounds.Effect) {
+    /** [onDone] est appelé (sur le fil de lecture) quand le son se termine ou est interrompu. */
+    fun play(effect: DeterrentSounds.Effect, onDone: (() -> Unit)? = null) {
         // Un nouveau son coupe le précédent (enregistrement ou synthèse).
+        stop()
+        worker.execute { try { playNow(effect) } finally { onDone?.invoke() } }
+    }
+
+    /** Joue un fichier audio (son personnalisé) pendant [maxMs] au plus, au volume d’alarme maximal. */
+    fun playFile(file: java.io.File, maxMs: Long, onDone: (() -> Unit)? = null) {
+        stop()
+        worker.execute {
+            try { playMedia("custom", maxMs) { it.setDataSource(file.absolutePath) } } finally { onDone?.invoke() }
+        }
+    }
+
+    /** Coupe le son en cours (s’il y en a un). */
+    fun stop() {
         current?.let { try { it.stop() } catch (_: Exception) { } }
         currentPlayer?.let { try { it.stop() } catch (_: Exception) { } }
         currentDone?.countDown() // libère tout de suite le fil de lecture pour le son suivant
-        worker.execute { playNow(effect) }
     }
 
     private fun playNow(effect: DeterrentSounds.Effect) {
@@ -66,24 +80,31 @@ internal class SoundBoard(private val context: Context) {
         @android.annotation.SuppressLint("DiscouragedApi") // nom de ressource porté par l’énumération
         val res = context.resources.getIdentifier(name, "raw", context.packageName)
         if (res == 0) return false
+        return playMedia(effect.id, 15_000) { player ->
+            context.resources.openRawResourceFd(res).use { player.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+        }
+    }
+
+    private fun playMedia(label: String, maxMs: Long, source: (android.media.MediaPlayer) -> Unit): Boolean {
         val player = android.media.MediaPlayer()
         val done = java.util.concurrent.CountDownLatch(1)
         AlarmVolume.raise(context)
         try {
             player.setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            context.resources.openRawResourceFd(res).use { player.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+            source(player)
             player.setVolume(1f, 1f)
             player.setOnCompletionListener { done.countDown() }
             player.setOnErrorListener { _, _, _ -> done.countDown(); true }
             player.prepare()
             currentPlayer = player; currentDone = done
             player.start()
-            Log.i(TAG, "Playing recording ${effect.id}")
-            done.await(player.duration.toLong().coerceIn(500, 15_000) + 1_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            Log.i(TAG, "Playing recording $label")
+            val length = player.duration.toLong()
+            done.await((if (length <= 0) maxMs else length.coerceIn(500, maxMs)) + 1_000, java.util.concurrent.TimeUnit.MILLISECONDS)
             return true
         } catch (error: Exception) {
-            Log.w(TAG, "Recording ${effect.id} unavailable, using synthesis", error)
+            Log.w(TAG, "Recording $label unavailable", error)
             return false
         } finally {
             if (currentPlayer === player) { currentPlayer = null; currentDone = null }

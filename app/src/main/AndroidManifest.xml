@@ -42,6 +42,7 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Connexion directe (sans serveur) au téléphone caméra appairé pour recevoir les alertes de mouvement." />
         </service>
+        <receiver android:name=".AlarmStopReceiver" android:exported="false" />
         <receiver android:name=".AlertBootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

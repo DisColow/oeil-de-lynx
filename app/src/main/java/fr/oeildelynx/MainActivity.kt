@@ -535,14 +535,24 @@ class MainActivity : ComponentActivity() {
             }.setNegativeButton("Fermer", null).show()
     }
 
+    private val customSound = CustomSoundUi(this)
+
     private fun showAutoAlarmSound() {
-        val ids = listOf(MonitorService.SIREN) + DeterrentSounds.Effect.entries.map { it.id }
-        val current = ids.indexOf(prefs.getString(MonitorService.PREF_AUTO_ALARM_SOUND, MonitorService.SIREN)).coerceAtLeast(0)
-        AlertDialog.Builder(this).setTitle("Son de l’alarme")
-            .setSingleChoiceItems(ids.map { MonitorService.autoAlarmSoundLabel(it) }.toTypedArray(), current) { dialog, which ->
-                dialog.dismiss()
-                applyAutoAlarm("autoalarmsound", ids[which], MonitorService.PREF_AUTO_ALARM_SOUND)
-            }.setNegativeButton("Fermer", null).show()
+        val state = mapOf(
+            "aas" to (prefs.getString(MonitorService.PREF_AUTO_ALARM_SOUND, MonitorService.SIREN) ?: MonitorService.SIREN),
+            "aac" to if (CustomAlarmSound.exists(this)) "1" else "0")
+        AutoAlarmUi.chooseSound(this, LiveCamera.name(this), state, { pickCustomSound() }) { picked ->
+            picked?.let { applyAutoAlarm("autoalarmsound", it, MonitorService.PREF_AUTO_ALARM_SOUND) }
+        }
+    }
+
+    /** Son personnalisé enregistré ou importé directement sur ce téléphone caméra. */
+    private fun pickCustomSound() {
+        customSound.open("Son personnalisé de l’alarme") { bytes, result ->
+            val error = CustomAlarmSound.save(this, bytes)
+            if (error == null) runOnUiThread { applyAutoAlarm("autoalarmsound", CustomAlarmSound.ID, MonitorService.PREF_AUTO_ALARM_SOUND) }
+            result(error)
+        }
     }
 
     private fun applyAutoAlarm(op: String, value: String, pref: String) {

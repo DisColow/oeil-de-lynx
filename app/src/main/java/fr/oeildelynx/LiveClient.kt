@@ -223,6 +223,21 @@ internal class LiveClient(
             }
         }
 
+        /** Envoie le son personnalisé de l’alarme ; renvoie l’état de la caméra (erreur lisible sinon). */
+        @Synchronized fun uploadSound(bytes: ByteArray): Map<String, String> {
+            channel.send(LiveProtocol.TYPE_REQUEST, LiveProtocol.encodeFields(mapOf("op" to "customsound")).toByteArray(Charsets.UTF_8))
+            channel.send(LiveProtocol.TYPE_CHUNK, bytes)
+            val reply = channel.receive()
+            return when (reply.type) {
+                LiveProtocol.TYPE_STATUS -> LiveProtocol.decodeFields(String(reply.payload, Charsets.UTF_8))
+                LiveProtocol.TYPE_ERROR -> {
+                    val message = String(reply.payload, Charsets.UTF_8)
+                    throw IOException(if (message == "Requête inconnue") "Mets à jour Œil de Lynx sur le téléphone caméra (1.25.0 ou plus)." else message)
+                }
+                else -> throw IOException("Réponse inattendue de la caméra")
+            }
+        }
+
         override fun close() { try { socket.close() } catch (_: IOException) { } }
     }
 
