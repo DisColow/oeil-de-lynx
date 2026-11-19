@@ -75,11 +75,12 @@ class ViewerActivity : ComponentActivity() {
     /** Interroge la caméra en arrière-plan (elle doit être en surveillance pour répondre). */
     private fun fetchState(cameraId: String) = sendControl(cameraId, mapOf("op" to "settings"), quiet = true)
 
-    private fun sendControl(cameraId: String, fields: Map<String, String>, quiet: Boolean = false) {
+    /** [then] : commandes suivantes envoyées dans l’ordre, après [fields]. */
+    private fun sendControl(cameraId: String, fields: Map<String, String>, quiet: Boolean = false, then: List<Map<String, String>> = emptyList()) {
         if (!pending.add(cameraId)) return
         refresh()
         Thread {
-            val result = try { Result.success(LiveClient(applicationContext, cameraId, NO_LISTENER).control(fields)) } catch (error: Exception) { Result.failure(error) }
+            val result = try { Result.success((listOf(fields) + then).map { LiveClient(applicationContext, cameraId, NO_LISTENER).control(it) }.last()) } catch (error: Exception) { Result.failure(error) }
             runOnUiThread {
                 pending -= cameraId
                 result.onSuccess { remoteState[cameraId] = it; remoteError -= cameraId }
@@ -139,6 +140,15 @@ class ViewerActivity : ComponentActivity() {
                 if (threshold == 0) "Désactivée" else "Sous $threshold % de batterie, reprise au branchement") {
                 chooseThreshold(camera, threshold)
             })
+            // Alarme automatique (caméras 1.22.0 et plus, qui annoncent « aa »).
+            state["aa"]?.let { mode ->
+                val sound = state["aas"] ?: MonitorService.SIREN
+                card.addView(LynxUi.row(this, R.drawable.ic_shield, "Alarme automatique",
+                    if (mode == MonitorService.AUTO_OFF) "Désactivée"
+                    else "${MonitorService.AUTO_ALARM_LABELS[mode] ?: mode} · ${MonitorService.autoAlarmSoundLabel(sound)}") {
+                    chooseAutoAlarm(camera, mode, sound)
+                })
+            }
         }
 
         val alarmOn = state?.get("alarm") == "1"
@@ -157,6 +167,34 @@ class ViewerActivity : ComponentActivity() {
                 dialog.dismiss()
                 sendControl(camera.id, mapOf("op" to "threshold", "value" to values[which].toString()))
             }.setNegativeButton("Fermer", null).show()
+    }
+
+    private fun chooseAutoAlarm(camera: PairingCode, mode: String, sound: String) {
+        val modes = MonitorService.AUTO_ALARM_LABELS.keys.toList()
+        AlertDialog.Builder(this).setTitle("Alarme automatique de ${camera.name}")
+            .setSingleChoiceItems(MonitorService.AUTO_ALARM_LABELS.values.toTypedArray(), modes.indexOf(mode).coerceAtLeast(0)) { dialog, which ->
+                dialog.dismiss()
+                val chosen = modes[which]
+                val setMode = mapOf("op" to "autoalarm", "value" to chosen)
+                if (chosen == MonitorService.AUTO_OFF) sendControl(camera.id, setMode)
+                else chooseAutoAlarmSound(camera, sound) { picked ->
+                    if (picked == null) sendControl(camera.id, setMode)
+                    else sendControl(camera.id, mapOf("op" to "autoalarmsound", "value" to picked), then = listOf(setMode))
+                }
+            }.setNegativeButton("Fermer", null).show()
+    }
+
+    /** [onChosen] reçoit le son choisi, ou null si l’utilisateur garde le son actuel. */
+    private fun chooseAutoAlarmSound(camera: PairingCode, current: String, onChosen: (String?) -> Unit) {
+        val ids = listOf(MonitorService.SIREN) + DeterrentSounds.Effect.entries.map { it.id }
+        var answered = false
+        AlertDialog.Builder(this).setTitle("Son joué par ${camera.name}")
+            .setSingleChoiceItems(ids.map { MonitorService.autoAlarmSoundLabel(it) }.toTypedArray(), ids.indexOf(current).coerceAtLeast(0)) { dialog, which ->
+                answered = true; dialog.dismiss(); onChosen(ids[which])
+            }
+            .setNegativeButton("Garder ${MonitorService.autoAlarmSoundLabel(current)}", null)
+            .setOnDismissListener { if (!answered) { answered = true; onChosen(null) } }
+            .show()
     }
 
     private fun confirmAlarm(camera: PairingCode) {
@@ -231,6 +269,26 @@ class ViewerActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             alertRow.addView(toggle)
             card.addView(alertRow)
+            // Réception automatique : chaque clip terminé est téléchargé sur ce téléphone.
+            val autoClips = camera.id in ViewerStore.autoClipCameras(this)
+            val clipRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(4), dp(12), dp(12))
+                background = LynxUi.pressable(this@ViewerActivity, 0x00000000, 20)
+                contentDescription = "Recevoir les clips automatiquement"
+                setOnClickListener {
+                    if (autoClips) { ViewerStore.setAutoClips(this@ViewerActivity, camera.id, false); AlertService.sync(this@ViewerActivity); refresh() }
+                    else enableAutoClips(camera)
+                }
+            }
+            clipRow.addView(LynxUi.icon(this, R.drawable.ic_gallery, if (autoClips) LynxUi.ACCENT else LynxUi.MUTED, 22))
+            clipRow.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0)
+                addView(TextView(this@ViewerActivity).apply { text = "Recevoir les clips automatiquement"; textSize = 14.5f; setTextColor(LynxUi.TEXT) })
+                addView(LynxUi.body(this@ViewerActivity, if (autoClips) "Activé : chaque nouveau clip arrive dans ta galerie" else "Désactivé", 12.5f))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            clipRow.addView(SwitchCompat(this).apply { isChecked = autoClips; isClickable = false; isFocusable = false })
+            card.addView(clipRow)
             addRemoteControls(card, camera)
             list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
@@ -330,6 +388,23 @@ class ViewerActivity : ComponentActivity() {
                     .setNegativeButton("Annuler", null).show()
             }
         ))
+    }
+
+    private fun enableAutoClips(camera: PairingCode) {
+        AlertDialog.Builder(this).setTitle("Recevoir les clips de ${camera.name} ?")
+            .setMessage("Ce téléphone reste connecté à la caméra (sans image) et télécharge chaque nouveau clip dès qu’il est terminé, " +
+                "dans Photos › Œil de Lynx et dans la galerie de l’application. Seuls les clips enregistrés à partir de maintenant sont envoyés.\n\n" +
+                "Chaque clip pèse quelques Mo : hors Wi-Fi, cela consomme des données mobiles.")
+            .setPositiveButton("Activer") { _, _ ->
+                ViewerStore.setAutoClips(this, camera.id, true)
+                AlertService.sync(this)
+                refresh()
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            .setNegativeButton("Annuler", null).show()
     }
 
     private fun requestAlerts(cameraId: String) {

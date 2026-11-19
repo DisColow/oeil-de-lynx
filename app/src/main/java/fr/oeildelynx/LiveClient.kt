@@ -39,6 +39,7 @@ internal object ViewerStore {
         val list = cameras(context).filterNot { it.id == id }
         prefs(context).edit().putString(KEY, list.joinToString("\n") { it.encode() }).apply()
         setAlerts(context, id, false)
+        setAutoClips(context, id, false)
     }
 
     private const val KEY_ALERTS = "alert_cameras"
@@ -50,6 +51,24 @@ internal object ViewerStore {
         val ids = alertCameras(context).toMutableSet().apply { if (enabled) add(id) else remove(id) }
         prefs(context).edit().putStringSet(KEY_ALERTS, ids).apply()
     }
+
+    private const val KEY_AUTO_CLIPS = "autoclip_cameras"
+
+    /** Caméras dont les nouveaux clips sont téléchargés automatiquement sur ce téléphone. */
+    fun autoClipCameras(context: Context): Set<String> = prefs(context).getStringSet(KEY_AUTO_CLIPS, emptySet()).orEmpty()
+
+    fun setAutoClips(context: Context, id: String, enabled: Boolean) {
+        val ids = autoClipCameras(context).toMutableSet().apply { if (enabled) add(id) else remove(id) }
+        prefs(context).edit().putStringSet(KEY_AUTO_CLIPS, ids).remove("clipsync_$id").apply()
+    }
+
+    /** Début (ms) du dernier clip reçu automatiquement ; 0 = jamais synchronisé. */
+    fun lastSyncedClip(context: Context, id: String): Long = prefs(context).getLong("clipsync_$id", 0L)
+
+    fun setLastSyncedClip(context: Context, id: String, start: Long) = prefs(context).edit().putLong("clipsync_$id", start).apply()
+
+    /** Caméras surveillées en arrière-plan (alertes et/ou réception des clips). */
+    fun watchedCameras(context: Context): Set<String> = alertCameras(context) + autoClipCameras(context)
 
     /** Les adresses annoncées par la caméra passent devant ; les anciennes restent en secours. */
     fun mergeHosts(fresh: List<String>, previous: List<String>): List<String> = (fresh + previous).distinct().take(8)

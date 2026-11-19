@@ -33,10 +33,12 @@ DIRECT DEPUIS UN AUTRE TÉLÉPHONE
 
 ALERTES
 • Notification sur votre téléphone à chaque mouvement détecté.
+• Réception automatique des nouveaux clips sur votre téléphone.
 • Alerte si la caméra devient injoignable ou si sa batterie est faible.
 
 DISSUASION
 • Déclenchez à distance une sirène stridente sur le téléphone caméra, même s’il est en silencieux.
+• Alarme automatique : sirène ou son dissuasif joué dès qu’un mouvement ou un bruit est détecté.
 
 ÉCONOMIE D’ÉNERGIE
 • Niveau de batterie de la caméra visible à distance.
