@@ -442,6 +442,11 @@ class MainActivity : ComponentActivity() {
                     .setAction(MonitorService.ACTION_SET_SOUND).putExtra(MonitorService.EXTRA_SOUND, !soundOn))
                 toast(if (soundOn) "Seul le mouvement déclenche un clip." else "Le son déclenche aussi un clip.")
             },
+            LynxUi.SheetItem(R.drawable.ic_bell, "Alarme automatique",
+                MonitorService.AUTO_ALARM_LABELS[prefs.getString(MonitorService.PREF_AUTO_ALARM, MonitorService.AUTO_OFF)].let { mode ->
+                    if (prefs.getString(MonitorService.PREF_AUTO_ALARM, MonitorService.AUTO_OFF) == MonitorService.AUTO_OFF) "Désactivée"
+                    else "$mode · ${MonitorService.autoAlarmSoundLabel(prefs.getString(MonitorService.PREF_AUTO_ALARM_SOUND, MonitorService.SIREN) ?: MonitorService.SIREN)}"
+                }) { showAutoAlarm() },
             LynxUi.SheetItem(R.drawable.ic_battery, "Veille automatique (batterie)",
                 prefs.getInt(MonitorService.PREF_STANDBY_THRESHOLD, MonitorService.DEFAULT_STANDBY_THRESHOLD).let { if (it == 0) "Désactivée" else "Sous $it %, reprise au branchement" }) { showStandbyThreshold() },
             LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", "${durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes"} · découpe les mouvements très longs") { showRules() },
@@ -516,6 +521,35 @@ class MainActivity : ComponentActivity() {
             .setSingleChoiceItems(labels, levels.indexOf(MonitorService.motionSensitivity(this))) { dialog, which ->
                 prefs.edit().putString(MonitorService.PREF_SENSITIVITY, levels[which].name).apply(); dialog.dismiss()
             }.setNegativeButton("Fermer", null).show()
+    }
+
+    /** Alarme automatique : quand se déclencher, puis quel son jouer. Appliqué tout de suite pendant la surveillance. */
+    private fun showAutoAlarm() {
+        val modes = MonitorService.AUTO_ALARM_LABELS.keys.toList()
+        val current = modes.indexOf(prefs.getString(MonitorService.PREF_AUTO_ALARM, MonitorService.AUTO_OFF)).coerceAtLeast(0)
+        AlertDialog.Builder(this).setTitle("Alarme automatique")
+            .setSingleChoiceItems(MonitorService.AUTO_ALARM_LABELS.values.toTypedArray(), current) { dialog, which ->
+                dialog.dismiss()
+                applyAutoAlarm("autoalarm", modes[which], MonitorService.PREF_AUTO_ALARM)
+                if (modes[which] != MonitorService.AUTO_OFF) showAutoAlarmSound()
+            }.setNegativeButton("Fermer", null).show()
+    }
+
+    private fun showAutoAlarmSound() {
+        val ids = listOf(MonitorService.SIREN) + DeterrentSounds.Effect.entries.map { it.id }
+        val current = ids.indexOf(prefs.getString(MonitorService.PREF_AUTO_ALARM_SOUND, MonitorService.SIREN)).coerceAtLeast(0)
+        AlertDialog.Builder(this).setTitle("Son de l’alarme")
+            .setSingleChoiceItems(ids.map { MonitorService.autoAlarmSoundLabel(it) }.toTypedArray(), current) { dialog, which ->
+                dialog.dismiss()
+                applyAutoAlarm("autoalarmsound", ids[which], MonitorService.PREF_AUTO_ALARM_SOUND)
+            }.setNegativeButton("Fermer", null).show()
+    }
+
+    private fun applyAutoAlarm(op: String, value: String, pref: String) {
+        prefs.edit().putString(pref, value).apply()
+        // Pendant la surveillance, le service rouvre ou ferme le micro selon le nouveau réglage.
+        if (surveillance) startService(Intent(this, MonitorService::class.java).setAction(MonitorService.ACTION_CONTROL)
+            .putExtra(MonitorService.EXTRA_OP, op).putExtra(MonitorService.EXTRA_VALUE, value))
     }
 
     /** Seuil de batterie sous lequel la surveillance se met seule en veille (hors charge). */

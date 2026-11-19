@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.21.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.22.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.21.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.22.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -23,6 +23,8 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - **Sons dissuasifs** : depuis le direct, bouton « Sons » : vrais enregistrements (chat en colère, feulement de chat, bombe d’air, aboiements, coups à la porte, sifflet, emballage froissé, corne de brume) et quelques sons synthétisés, joués au volume maximum sur le téléphone caméra pour détourner un chat d’une bêtise.
 - **Alarme à distance** : depuis le téléphone spectateur (liste des caméras ou direct), une sirène stridente retentit sur le téléphone caméra, volume au maximum, même en silencieux.
 - **Détection du son à distance** : activable ou désactivable depuis la liste des caméras du spectateur.
+- **Alarme automatique** (Réglages › Alarme automatique sur la caméra, ou depuis la liste des caméras du spectateur) : sur mouvement, sur son, ou les deux, la caméra joue elle-même la sirène (30 s) ou un son dissuasif au choix, au plus une fois par minute. Ses propres sons ne la redéclenchent pas ; rien en veille.
+- **Réception automatique des clips** : sous chaque caméra, l’interrupteur « Recevoir les clips automatiquement » fait télécharger chaque nouveau clip sur le téléphone spectateur dès qu’il est terminé (Photos › Œil de Lynx et galerie de l’application), avec une notification. Seuls les clips enregistrés après l’activation sont envoyés ; après une coupure, les 10 derniers manqués sont rattrapés.
 - **Parler à travers la caméra** : bouton « Maintenir pour parler » dans le direct ; la voix sort du haut-parleur du téléphone caméra, volume au maximum.
 - **Son dans le direct** : le spectateur entend la pièce (bouton Son pour couper), en plus de l’image.
 - **Orientation automatique** : posé en portrait, en paysage ou à l’envers, le téléphone caméra envoie une image droite (direct et clips). Bouton « Pivoter » dans le direct en secours.
@@ -104,6 +106,8 @@ Sur le téléphone spectateur, les notifications sont proposées dès l’appair
 - une notification si la caméra reste injoignable plus de 3 minutes (surveillance arrêtée, Wi-Fi ou box coupés…).
 
 Comme il n’y a pas de serveur de notifications (type Firebase), c’est un service de premier plan du téléphone spectateur qui maintient la connexion ; une notification discrète indique l’état de chaque caméra. Il redémarre avec le téléphone. Les mêmes conditions réseau que le direct s’appliquent ; exclure l’application de l’optimisation de batterie sur le téléphone spectateur pour éviter qu’Android ne coupe la connexion. Jusqu’à 5 téléphones peuvent recevoir les alertes d’une caméra, en plus des 3 spectateurs du direct.
+
+La même connexion sert à la **réception automatique des clips** : la caméra annonce chaque clip terminé, le spectateur liste la galerie de la caméra et télécharge les clips plus récents que le dernier reçu (connexion chiffrée habituelle), en réessayant toutes les 2 minutes en cas d’échec. Les clips reçus sont nommés `recu_<caméra>_<heure>.mp4`.
 
 ### Débit, batterie et limites
 
@@ -214,11 +218,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.21.0
-git push origin v1.21.0
+git tag v1.22.0
+git push origin v1.22.0
 ```
 
-Remplacer `1.21.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
+Remplacer `1.22.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 

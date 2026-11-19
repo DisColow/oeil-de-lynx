@@ -156,6 +156,9 @@ class MonitorService : LifecycleService() {
             requestCameraSwitch(intent.getBooleanExtra(EXTRA_FRONT_CAMERA, useFrontCamera))
         } else if (intent?.action == ACTION_STANDBY && !shuttingDown) {
             if (intent.getBooleanExtra(EXTRA_STANDBY, false)) enterStandby(REASON_MANUAL) else exitStandby()
+        } else if (intent?.action == ACTION_CONTROL && !shuttingDown) {
+            val op = intent.getStringExtra(EXTRA_OP); val value = intent.getStringExtra(EXTRA_VALUE)
+            if (op != null && value != null) applyControl(mapOf("op" to op, "value" to value))
         } else if (intent?.action == ACTION_STOP_ALARM) {
             stopSiren()
         } else if (intent?.action == ACTION_SET_SOUND && !shuttingDown) {
@@ -292,6 +295,7 @@ class MonitorService : LifecycleService() {
             val previous = previousLuma
             if (previous != null && MotionDetector.hasMotion(currentSamples, previous, motionSensitivity(this))) {
                 lastMotionAt = now
+                ContextCompat.getMainExecutor(this).execute { onDetection(DETECT_MOTION) }
                 triggerRecording("Mouvement")
             }
             previousLuma = currentSamples
@@ -302,7 +306,8 @@ class MonitorService : LifecycleService() {
     private fun startSoundDetection() {
         if (recording != null || audioRecord != null || standby) return
         // Par défaut seul le mouvement déclenche un clip ; le son est une option des réglages.
-        if (!getSharedPreferences("lynx", Context.MODE_PRIVATE).getBoolean(PREF_SOUND_TRIGGER, false)) return
+        // Le micro écoute aussi si l’alarme automatique doit réagir au son.
+        if (!soundTriggersClips() && !autoAlarmOn(DETECT_SOUND)) return
         // La permission peut être révoquée depuis les réglages pendant la vie du service.
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         val min = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -320,7 +325,12 @@ class MonitorService : LifecycleService() {
                     for (i in 0 until n) { val v = samples[i].toDouble() / 32768.0; energy += v * v }
                     val rms = sqrt(energy / n)
                     // Seuil RMS fixe ; l’ajuster en mesurant les niveaux du vrai téléphone si nécessaire.
-                    if (rms > 0.055) { lastSoundAt = SystemClock.elapsedRealtime(); triggerRecording("Son") }
+                    // Les sons joués par la caméra elle-même (sirène, sons, voix) ne comptent pas.
+                    if (rms > 0.055 && !playingOwnSound()) {
+                        lastSoundAt = SystemClock.elapsedRealtime()
+                        ContextCompat.getMainExecutor(this).execute { onDetection(DETECT_SOUND) }
+                        if (soundTriggersClips()) triggerRecording("Son")
+                    }
                 }
             }
         }.apply { name = "lynx-audio-detector"; start() }
@@ -370,6 +380,11 @@ class MonitorService : LifecycleService() {
                             }
                         }
                         if (!shuttingDown && !standby && pendingStandby == null) updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+                        if (!event.hasError()) {
+                            // Dernier clip terminé : annoncé aux spectateurs qui récupèrent les clips automatiquement.
+                            lastClipId = try { android.content.ContentUris.parseId(event.outputResults.outputUri) } catch (_: Exception) { -1L }
+                            publishLiveStatus()
+                        }
                         if (event.hasError()) contentResolver.delete(event.outputResults.outputUri, null, null)
                         else getSystemService(NotificationManager::class.java).notify(
                             detectionId, detectionNotification("$reason détecté · capture terminée", outputName, detectionId)
@@ -429,6 +444,7 @@ class MonitorService : LifecycleService() {
                     } else if (request["op"] == "fx") {
                         // Son dissuasif choisi par un spectateur (feulement, bombe d’air…).
                         DeterrentSounds.Effect.byId(request["id"])?.let { effect ->
+                            ownSoundUntil = SystemClock.elapsedRealtime() + 12_000
                             (soundBoard ?: SoundBoard(applicationContext).also { soundBoard = it }).play(effect)
                         }
                     } else if (request["op"] == "meter") {
@@ -436,14 +452,17 @@ class MonitorService : LifecycleService() {
                         val x = request["x"]?.toFloatOrNull(); val y = request["y"]?.toFloatOrNull()
                         val zone = if (request["reset"] == "1" || x == null || y == null) null else x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setMetering(zone) }
-                    } else if (request["op"] in setOf("alarm", "sound", "standby", "threshold")) {
+                    } else if (request["op"] in setOf("alarm", "sound", "standby", "threshold", "autoalarm", "autoalarmsound")) {
                         // Mêmes commandes que depuis la liste des caméras (veille / reprise comprises).
                         control(request)
                     }
                 },
                 onControl = { request -> control(request) },
                 gallery = CaptureLibrary(applicationContext),
-                onTalk = { chunk -> (talkSpeaker ?: TalkSpeaker(applicationContext).also { talkSpeaker = it }).play(chunk) },
+                onTalk = { chunk ->
+                    ownSoundUntil = SystemClock.elapsedRealtime() + 2_000
+                    (talkSpeaker ?: TalkSpeaker(applicationContext).also { talkSpeaker = it }).play(chunk)
+                },
                 onAudioDemandChanged = { demand ->
                     ContextCompat.getMainExecutor(this).execute { if (demand && !shuttingDown) startLiveAudio() else stopLiveAudio() }
                 },
@@ -555,7 +574,10 @@ class MonitorService : LifecycleService() {
         "chg" to if (batteryCharging) "1" else "0",
         "standby" to if (standby) "1" else "0",
         "standbywhy" to standbyReason,
-        "thr" to standbyThreshold().toString()
+        "thr" to standbyThreshold().toString(),
+        "aa" to autoAlarmMode(),
+        "aas" to autoAlarmSound(),
+        "clip" to lastClipId.toString()
     )
 
     @Volatile private var batteryLevel = -1
@@ -580,29 +602,67 @@ class MonitorService : LifecycleService() {
      * Exécutées sur le thread principal ; renvoie l’état à jour. Appelée depuis un thread réseau.
      */
     private fun control(request: Map<String, String>): Map<String, String> {
-        val task = java.util.concurrent.FutureTask {
-            if (!shuttingDown) {
-                val on = request["value"] == "1"
-                when (request["op"]) {
-                    "alarm" -> if (on) startSiren() else stopSiren()
-                    "standby" -> if (on) enterStandby(REASON_REMOTE) else exitStandby()
-                    "threshold" -> request["value"]?.toIntOrNull()?.let { setStandbyThreshold(it) }
-                    "sound" -> setSoundTrigger(on)
-                }
-            }
-            controlState()
-        }
+        val task = java.util.concurrent.FutureTask { applyControl(request); controlState() }
         ContextCompat.getMainExecutor(this).execute(task)
         return try { task.get(5, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { controlState() }
     }
 
-    private fun startSiren() {
+    /** Exécute une commande de spectateur ou du HUD (thread principal). */
+    private fun applyControl(request: Map<String, String>) {
+        if (shuttingDown) return
+        val on = request["value"] == "1"
+        when (request["op"]) {
+            "alarm" -> if (on) startSiren() else stopSiren()
+            "standby" -> if (on) enterStandby(REASON_REMOTE) else exitStandby()
+            "autoalarm" -> request["value"]?.takeIf { it in AUTO_ALARM_MODES }?.let { setAutoAlarm(mode = it) }
+            "autoalarmsound" -> request["value"]?.takeIf { it == SIREN || DeterrentSounds.Effect.byId(it) != null }?.let { setAutoAlarm(sound = it) }
+            "threshold" -> request["value"]?.toIntOrNull()?.let { setStandbyThreshold(it) }
+            "sound" -> setSoundTrigger(on)
+        }
+    }
+
+    private fun startSiren(maxMs: Long = AlarmSiren.MAX_DURATION_MS) {
         val alarm = siren ?: AlarmSiren(applicationContext) {
             ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) { updateStatus(statusText); publishLiveStatus() } }
         }.also { siren = it }
-        alarm.start()
+        alarm.start(maxMs)
         updateStatus(statusText)
         publishLiveStatus()
+    }
+
+    // ——— Alarme automatique : sirène ou son dissuasif joué tout seul sur mouvement et/ou son. ———
+    @Volatile private var lastClipId = -1L
+    @Volatile private var ownSoundUntil = 0L
+    private var lastAutoAlarmAt = 0L
+
+    private fun prefs() = getSharedPreferences("lynx", Context.MODE_PRIVATE)
+    private fun soundTriggersClips() = prefs().getBoolean(PREF_SOUND_TRIGGER, false)
+    private fun autoAlarmMode() = prefs().getString(PREF_AUTO_ALARM, AUTO_OFF) ?: AUTO_OFF
+    private fun autoAlarmSound() = prefs().getString(PREF_AUTO_ALARM_SOUND, SIREN) ?: SIREN
+    private fun autoAlarmOn(kind: String) = when (autoAlarmMode()) { AUTO_BOTH -> true; kind -> true; else -> false }
+    private fun playingOwnSound() = siren?.isRunning == true || SystemClock.elapsedRealtime() < ownSoundUntil
+
+    private fun setAutoAlarm(mode: String? = null, sound: String? = null) {
+        prefs().edit().apply { mode?.let { putString(PREF_AUTO_ALARM, it) }; sound?.let { putString(PREF_AUTO_ALARM_SOUND, it) } }.apply()
+        // Le micro doit écouter (ou plus) selon le nouveau réglage.
+        if (autoAlarmOn(DETECT_SOUND) || soundTriggersClips()) startSoundDetection() else stopSoundDetection()
+        publishLiveStatus()
+    }
+
+    /** Mouvement ou son détecté : déclenche l’alarme si elle est armée pour ce type, au plus une fois par minute. */
+    private fun onDetection(kind: String) {
+        if (shuttingDown || standby || !autoAlarmOn(kind) || playingOwnSound()) return
+        val now = SystemClock.elapsedRealtime()
+        if (lastAutoAlarmAt != 0L && now - lastAutoAlarmAt < AUTO_ALARM_COOLDOWN_MS) return
+        lastAutoAlarmAt = now
+        val sound = autoAlarmSound()
+        Log.i(TAG, "Automatic alarm ($kind → $sound)")
+        if (sound == SIREN) {
+            startSiren(AUTO_SIREN_MS)
+        } else DeterrentSounds.Effect.byId(sound)?.let { effect ->
+            ownSoundUntil = now + 12_000
+            (soundBoard ?: SoundBoard(applicationContext).also { soundBoard = it }).play(effect)
+        }
     }
 
     private fun stopSiren() {
@@ -613,7 +673,8 @@ class MonitorService : LifecycleService() {
     /** Détection du son activée ou coupée tout de suite, sans redémarrer la surveillance. */
     private fun setSoundTrigger(on: Boolean) {
         getSharedPreferences("lynx", Context.MODE_PRIVATE).edit().putBoolean(PREF_SOUND_TRIGGER, on).apply()
-        if (on) startSoundDetection() else stopSoundDetection()
+        // Le micro reste ouvert si l’alarme automatique écoute le son.
+        if (on || autoAlarmOn(DETECT_SOUND)) startSoundDetection() else stopSoundDetection()
         publishLiveStatus()
     }
 
@@ -786,6 +847,24 @@ class MonitorService : LifecycleService() {
         const val REASON_BATTERY = "batterie"
         const val REASON_REMOTE = "spectateur"
         const val REASON_MANUAL = "manuel"
+        const val ACTION_CONTROL = "fr.oeildelynx.action.CONTROL"
+        const val EXTRA_OP = "op"
+        const val EXTRA_VALUE = "value"
+        const val PREF_AUTO_ALARM = "auto_alarm"
+        const val PREF_AUTO_ALARM_SOUND = "auto_alarm_sound"
+        const val AUTO_OFF = "off"
+        const val AUTO_MOTION = "motion"
+        const val AUTO_SOUND = "sound"
+        const val AUTO_BOTH = "both"
+        val AUTO_ALARM_MODES = setOf(AUTO_OFF, AUTO_MOTION, AUTO_SOUND, AUTO_BOTH)
+        const val SIREN = "siren"
+        private const val DETECT_MOTION = AUTO_MOTION
+        private const val DETECT_SOUND = AUTO_SOUND
+        private const val AUTO_ALARM_COOLDOWN_MS = 60_000L
+        private const val AUTO_SIREN_MS = 30_000L
+        /** Libellés des modes d’alarme automatique (écrans caméra et spectateur). */
+        val AUTO_ALARM_LABELS = linkedMapOf(AUTO_OFF to "Désactivée", AUTO_MOTION to "Sur mouvement", AUTO_SOUND to "Sur son", AUTO_BOTH to "Sur mouvement ou son")
+        fun autoAlarmSoundLabel(id: String) = if (id == SIREN) "Sirène (30 s)" else DeterrentSounds.Effect.byId(id)?.label ?: "Sirène (30 s)"
         const val ACTION_SET_SOUND = "fr.oeildelynx.action.SET_SOUND"
         const val EXTRA_SOUND = "sound_trigger"
         const val EXTRA_EXPOSURE = "exposure_index"

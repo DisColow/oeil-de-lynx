@@ -13,12 +13,20 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.content.ContentValues
+import android.os.Environment
+import android.provider.MediaStore
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
  * Sur le téléphone spectateur : garde une connexion légère (sans image) avec chaque caméra
  * dont les alertes sont activées, et affiche une notification dès qu’elle commence un clip.
+ * Pour les caméras choisies, télécharge aussi chaque nouveau clip dès qu’il est terminé et le range
+ * dans la galerie de ce téléphone (Photos, dossier « Œil de Lynx »).
  *
  * Il n’y a pas de serveur de notifications : c’est ce téléphone qui reste connecté directement
  * à la caméra (Wi-Fi ou box internet), comme pour le direct. D’où le service de premier plan.
@@ -38,6 +46,7 @@ class AlertService : Service() {
                 lostSince = 0L
                 if (lostNotified) { lostNotified = false; cancel(lostId(cameraId)) }
             } else if (wasConnected || lostSince == 0L) {
+                lastClip = null
                 if (lostSince == 0L) lostSince = SystemClock.elapsedRealtime()
             }
             checkLost(this)
@@ -49,7 +58,10 @@ class AlertService : Service() {
         override fun onStatus(fields: Map<String, String>) {
             val nowRecording = fields["rec"] == "1"
             // Une seule alerte par clip, même si la connexion tombe et revient pendant l’enregistrement.
-            if (nowRecording && recording != true) notifyMotion(cameraId, fields["why"].orEmpty())
+            if (nowRecording && recording != true && cameraId in ViewerStore.alertCameras(this@AlertService)) notifyMotion(cameraId, fields["why"].orEmpty())
+            // Nouveau clip terminé (ou première nouvelle depuis la connexion) : on récupère ce qui manque.
+            val clip = fields["clip"]
+            if (clip != null && clip != lastClip) { lastClip = clip; scheduleClipSync(cameraId) }
             recording = nowRecording
             checkBattery(fields["bat"]?.toIntOrNull(), fields["chg"] == "1")
             val asleep = fields["standby"] == "1"
@@ -58,6 +70,7 @@ class AlertService : Service() {
         }
 
         @Volatile var standby: Boolean? = null
+        @Volatile var lastClip: String? = null
 
         @Volatile var lowBatteryNotified = false
 
@@ -84,6 +97,7 @@ class AlertService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ONGOING, "Connexion aux caméras", NotificationManager.IMPORTANCE_MIN))
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Alertes de mouvement", NotificationManager.IMPORTANCE_HIGH))
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_CLIPS, "Clips reçus", NotificationManager.IMPORTANCE_DEFAULT))
         val notification = ongoing("Connexion aux caméras…")
         if (Build.VERSION.SDK_INT >= 34) startForeground(ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(ONGOING_ID, notification)
@@ -91,7 +105,7 @@ class AlertService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         synchronized(watches) {
-            val wanted = ViewerStore.alertCameras(this).filter { ViewerStore.find(this, it) != null }.toSet()
+            val wanted = ViewerStore.watchedCameras(this).filter { ViewerStore.find(this, it) != null }.toSet()
             (watches.keys - wanted).forEach { id -> watches.remove(id)?.client?.stop(); cancel(lostId(id)) }
             (wanted - watches.keys).forEach { id -> watches[id] = Watch(id).also { it.client.start() } }
             if (watches.isEmpty()) { stopSelf(); return START_NOT_STICKY }
@@ -102,6 +116,7 @@ class AlertService : Service() {
 
     override fun onDestroy() {
         synchronized(watches) { watches.values.forEach { it.client.stop() }; watches.clear() }
+        clipSync.shutdownNow()
         super.onDestroy()
     }
 
@@ -143,7 +158,7 @@ class AlertService : Service() {
 
     private fun ongoing(text: String): Notification = NotificationCompat.Builder(this, CHANNEL_ONGOING)
         .setSmallIcon(android.R.drawable.ic_menu_view)
-        .setContentTitle("Alertes de mouvement actives")
+        .setContentTitle("Caméras suivies en arrière-plan")
         .setContentText(text.lineSequence().first())
         .setStyle(NotificationCompat.BigTextStyle().bigText(text))
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, ViewerActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
@@ -182,6 +197,88 @@ class AlertService : Service() {
             .setContentIntent(openLive(cameraId)).setAutoCancel(true).build())
     }
 
+    // ——— Réception automatique des clips ———
+
+    private val clipSync = Executors.newSingleThreadScheduledExecutor { task -> Thread(task, "lynx-clip-sync").apply { isDaemon = true } }
+    private val queuedSyncs = ConcurrentHashMap.newKeySet<String>()
+
+    private fun scheduleClipSync(cameraId: String, attempt: Int = 1, delayMs: Long = 0L) {
+        if (cameraId !in ViewerStore.autoClipCameras(this)) return
+        if (attempt == 1 && !queuedSyncs.add(cameraId)) return // déjà prévu : il prendra aussi ce clip
+        try {
+            clipSync.schedule({
+                queuedSyncs.remove(cameraId)
+                val ok = try { syncClips(cameraId); true } catch (_: Exception) { false }
+                if (!ok && attempt < SYNC_ATTEMPTS) scheduleClipSync(cameraId, attempt + 1, SYNC_RETRY_MS)
+            }, delayMs, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) { queuedSyncs.remove(cameraId) } // service arrêté
+    }
+
+    /** Télécharge les clips de la caméra plus récents que le dernier reçu (bloquant, hors du thread principal). */
+    private fun syncClips(cameraId: String) {
+        if (cameraId !in ViewerStore.autoClipCameras(this)) return
+        val camera = ViewerStore.find(this, cameraId) ?: return
+        LiveClient(applicationContext, cameraId, NO_LISTENER).openGallery().use { gallery ->
+            val response = gallery.request(mapOf("op" to "list"))
+            if (response.type != LiveProtocol.TYPE_LIST) throw java.io.IOException("Réponse inattendue")
+            val clips = String(response.payload, Charsets.UTF_8).lines().filter { it.isNotBlank() }
+                .map { LiveProtocol.decodeFields(it) }
+                .mapNotNull { f -> val id = f["id"]; val start = f["start"]?.toLongOrNull(); if (id.isNullOrEmpty() || start == null) null else id to start }
+            val last = ViewerStore.lastSyncedClip(this, cameraId)
+            if (last == 0L) {
+                // Première synchronisation : seuls les clips à venir seront envoyés, pas tout l’historique.
+                ViewerStore.setLastSyncedClip(this, cameraId, clips.maxOfOrNull { it.second }?.coerceAtLeast(1L) ?: 1L)
+                return
+            }
+            val fresh = clips.filter { it.second > last }.sortedBy { it.second }.takeLast(MAX_CLIPS_PER_SYNC)
+            for ((id, start) in fresh) {
+                if (cameraId !in ViewerStore.autoClipCameras(this)) return
+                val name = saveClip(gallery, camera.name, id, start)
+                ViewerStore.setLastSyncedClip(this, cameraId, start)
+                notifyClip(cameraId, camera.name, name, start)
+            }
+        }
+    }
+
+    /** Écrit le clip dans Films/Œil de Lynx (visible dans Photos et dans la galerie de l’application). */
+    private fun saveClip(gallery: LiveClient.GallerySession, cameraName: String, id: String, start: Long): String {
+        val safe = cameraName.replace(Regex("[^A-Za-z0-9À-ÿ_-]+"), "_").trim('_').ifEmpty { "camera" }.take(24)
+        val name = "recu_${safe}_$start.mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Œil de Lynx")
+            put(MediaStore.MediaColumns.DATE_TAKEN, start)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("Stockage indisponible")
+        try {
+            contentResolver.openOutputStream(uri)?.buffered()?.use { output -> gallery.download(id, output) { } }
+                ?: throw java.io.IOException("Stockage indisponible")
+            contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        } catch (e: Exception) {
+            try { contentResolver.delete(uri, null, null) } catch (_: Exception) { }
+            throw e
+        }
+        return name
+    }
+
+    private fun notifyClip(cameraId: String, cameraName: String, fileName: String, start: Long) {
+        val open = PendingIntent.getActivity(this, clipId(cameraId),
+            Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_FOCUS_NAME, fileName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.FRANCE).format(java.util.Date(start))
+        post(clipId(cameraId), NotificationCompat.Builder(this, CHANNEL_CLIPS)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Nouveau clip reçu · $cameraName")
+            .setContentText("Clip de $time enregistré dans la galerie. Touche pour le voir.")
+            .setWhen(start).setShowWhen(true)
+            .setContentIntent(open).setAutoCancel(true).build())
+    }
+
+    private fun clipId(cameraId: String) = 210_000 + (cameraId.hashCode() and 0xffff)
+
     private fun batteryId(cameraId: String) = 140_000 + (cameraId.hashCode() and 0xffff)
 
     private fun motionId(cameraId: String) = 1000 + (cameraId.hashCode() and 0xffff)
@@ -194,11 +291,21 @@ class AlertService : Service() {
         private const val LOST_ALERT_MS = 180_000L
         private const val LOW_BATTERY = 15
         private const val LOW_BATTERY_REARM = 20
+        private const val CHANNEL_CLIPS = "lynx-viewer-clips"
+        /** Au plus autant de clips rattrapés d’un coup (après une longue coupure). */
+        private const val MAX_CLIPS_PER_SYNC = 10
+        private const val SYNC_RETRY_MS = 120_000L
+        private const val SYNC_ATTEMPTS = 5
+        private val NO_LISTENER = object : LiveClient.Listener {
+            override fun onState(text: String, connected: Boolean) {}
+            override fun onFrame(bitmap: Bitmap) = bitmap.recycle()
+            override fun onStatus(fields: Map<String, String>) {}
+        }
 
-        /** Démarre, met à jour ou arrête le service selon les caméras dont les alertes sont activées. */
+        /** Démarre, met à jour ou arrête le service selon les caméras dont les alertes ou la réception des clips sont activées. */
         fun sync(context: Context) {
             val intent = Intent(context, AlertService::class.java)
-            if (ViewerStore.alertCameras(context).isEmpty()) context.stopService(intent)
+            if (ViewerStore.watchedCameras(context).isEmpty()) context.stopService(intent)
             else try { ContextCompat.startForegroundService(context, intent) } catch (_: Exception) { }
         }
     }
