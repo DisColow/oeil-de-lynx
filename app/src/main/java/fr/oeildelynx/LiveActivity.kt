@@ -233,10 +233,41 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     private lateinit var alarmIcon: ImageView
     private lateinit var alarmLabel: TextView
 
-    /** Sirène de la caméra : confirmation avant de la déclencher, arrêt immédiat sinon. */
+    /**
+     * Bouton Alarme : arrête tout de suite une sirène en cours ; sinon menu avec la sirène manuelle
+     * et le réglage de l’alarme automatique (activer / désactiver, déclencheur, son).
+     */
     private fun toggleAlarm() {
         if (lastStatus["alarm"] == "1") { client?.sendRequest(mapOf("op" to "alarm", "value" to "0")); return }
         if (lastStatus.isEmpty()) { Toast.makeText(this, "Direct non connecté.", Toast.LENGTH_SHORT).show(); return }
+        val status = HashMap(lastStatus)
+        val cameraId = cameraKey
+        val name = title.text.toString()
+        val send = { requests: List<Map<String, String>> -> requests.forEach { client?.sendRequest(it) } }
+        val items = mutableListOf(LynxUi.SheetItem(R.drawable.ic_bell, "Déclencher la sirène maintenant",
+            "Volume au maximum, même en silencieux", danger = true) { confirmSiren() })
+        if (status["aa"] != null) {
+            val on = AutoAlarmUi.isOn(status)
+            AutoAlarmUi.remember(this, cameraId, status["aa"])
+            val next = AutoAlarmUi.lastMode(this, cameraId)
+            items += LynxUi.SheetItem(R.drawable.ic_shield, if (on) "Désactiver l’alarme automatique" else "Activer l’alarme automatique",
+                if (on) AutoAlarmUi.summary(status) else "${MonitorService.AUTO_ALARM_LABELS[next]} · s’arme 1 minute après") {
+                send(listOf(AutoAlarmUi.setMode(if (on) MonitorService.AUTO_OFF else next)))
+                Toast.makeText(this, if (on) "Alarme automatique désactivée." else "Alarme automatique activée : elle s’arme dans 1 minute.", Toast.LENGTH_LONG).show()
+            }
+            items += LynxUi.SheetItem(R.drawable.ic_tune, "Déclencheur de l’alarme automatique",
+                MonitorService.AUTO_ALARM_LABELS[status["aa"]] ?: "Désactivée") { AutoAlarmUi.chooseMode(this, name, status, send) }
+            items += LynxUi.SheetItem(R.drawable.ic_volume, "Son de l’alarme automatique",
+                MonitorService.autoAlarmSoundLabel(status["aas"] ?: MonitorService.SIREN)) {
+                AutoAlarmUi.chooseSound(this, name, status["aas"] ?: MonitorService.SIREN) { picked ->
+                    picked?.let { send(listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
+                }
+            }
+        }
+        LynxUi.sheet(this, "Alarme", items)
+    }
+
+    private fun confirmSiren() {
         AlertDialog.Builder(this).setTitle("Déclencher l’alarme ?")
             .setMessage("Une sirène stridente va retentir sur la caméra, volume au maximum, même en silencieux, pendant 2 minutes ou jusqu’à ce que tu l’arrêtes.")
             .setPositiveButton("Déclencher") { _, _ -> client?.sendRequest(mapOf("op" to "alarm", "value" to "1")) }
@@ -427,7 +458,11 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         val alarmOn = fields["alarm"] == "1"
         if (::alarmIcon.isInitialized) {
             alarmIcon.background = LynxUi.pressableCircle(if (alarmOn) LynxUi.DANGER else 0x66223029)
-            alarmLabel.text = if (alarmOn) "Arrêter alarme" else "Alarme"
+            alarmLabel.text = when {
+                alarmOn -> "Arrêter alarme"
+                AutoAlarmUi.isOn(fields) -> if ((fields["aarm"]?.toLongOrNull() ?: 0) > 0) "Auto (armement)" else "Alarme · auto"
+                else -> "Alarme"
+            }
         }
         recBadge.visibility = if (fields["rec"] == "1") View.VISIBLE else View.GONE
         fields["n"]?.takeIf { it.isNotBlank() }?.let { title.text = it }

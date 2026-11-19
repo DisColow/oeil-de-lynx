@@ -531,7 +531,7 @@ class MainActivity : ComponentActivity() {
             .setSingleChoiceItems(MonitorService.AUTO_ALARM_LABELS.values.toTypedArray(), current) { dialog, which ->
                 dialog.dismiss()
                 applyAutoAlarm("autoalarm", modes[which], MonitorService.PREF_AUTO_ALARM)
-                if (modes[which] != MonitorService.AUTO_OFF) showAutoAlarmSound()
+                if (modes[which] != MonitorService.AUTO_OFF) { toast(AutoAlarmUi.ARMING_NOTE); showAutoAlarmSound() }
             }.setNegativeButton("Fermer", null).show()
     }
 

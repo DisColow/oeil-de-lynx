@@ -73,6 +73,8 @@ class ViewerActivity : ComponentActivity() {
     private val pending = mutableSetOf<String>()
 
     /** Interroge la caméra en arrière-plan (elle doit être en surveillance pour répondre). */
+    private val armingRefresh = mutableSetOf<String>()
+
     private fun fetchState(cameraId: String) = sendControl(cameraId, mapOf("op" to "settings"), quiet = true)
 
     /** [then] : commandes suivantes envoyées dans l’ordre, après [fields]. */
@@ -140,14 +142,41 @@ class ViewerActivity : ComponentActivity() {
                 if (threshold == 0) "Désactivée" else "Sous $threshold % de batterie, reprise au branchement") {
                 chooseThreshold(camera, threshold)
             })
-            // Alarme automatique (caméras 1.22.0 et plus, qui annoncent « aa »).
+            // Alarme automatique (caméras 1.22.0 et plus, qui annoncent « aa ») : interrupteur, déclencheur et son.
             state["aa"]?.let { mode ->
-                val sound = state["aas"] ?: MonitorService.SIREN
-                card.addView(LynxUi.row(this, R.drawable.ic_shield, "Alarme automatique",
-                    if (mode == MonitorService.AUTO_OFF) "Désactivée"
-                    else "${MonitorService.AUTO_ALARM_LABELS[mode] ?: mode} · ${MonitorService.autoAlarmSoundLabel(sound)}") {
-                    chooseAutoAlarm(camera, mode, sound)
+                val on = mode != MonitorService.AUTO_OFF
+                AutoAlarmUi.remember(this, camera.id, mode)
+                val autoRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(16), dp(12), dp(12), dp(12))
+                    background = LynxUi.pressable(this@ViewerActivity, 0x00000000, 20)
+                    contentDescription = "Alarme automatique"
+                    setOnClickListener { AutoAlarmUi.chooseMode(this@ViewerActivity, camera.name, state) { sendControls(camera.id, it) } }
+                }
+                autoRow.addView(LynxUi.icon(this, R.drawable.ic_shield, if (on) LynxUi.DANGER else LynxUi.MUTED, 22))
+                autoRow.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0)
+                    addView(TextView(this@ViewerActivity).apply { text = "Alarme automatique"; textSize = 14.5f; setTextColor(LynxUi.TEXT) })
+                    addView(LynxUi.body(this@ViewerActivity, AutoAlarmUi.summary(state) + "\nToucher pour choisir déclencheur et son", 12.5f))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                // L’interrupteur active (avec le dernier déclencheur choisi) ou désactive tout de suite.
+                autoRow.addView(SwitchCompat(this).apply {
+                    isChecked = on; contentDescription = if (on) "Désactiver l’alarme automatique" else "Activer l’alarme automatique"
+                    setOnClickListener { sendControl(camera.id, AutoAlarmUi.setMode(if (on) MonitorService.AUTO_OFF else AutoAlarmUi.lastMode(this@ViewerActivity, camera.id))) }
                 })
+                card.addView(autoRow)
+                if (on) card.addView(LynxUi.row(this, R.drawable.ic_volume, "Son de l’alarme automatique",
+                    MonitorService.autoAlarmSoundLabel(state["aas"] ?: MonitorService.SIREN)) {
+                    AutoAlarmUi.chooseSound(this, camera.name, state["aas"] ?: MonitorService.SIREN) { picked ->
+                        picked?.let { sendControl(camera.id, mapOf("op" to "autoalarmsound", "value" to it)) }
+                    }
+                })
+                // Le compte à rebours d’armement se met à jour une fois écoulé.
+                val arming = state["aarm"]?.toLongOrNull() ?: 0
+                if (on && arming > 0 && armingRefresh.add(camera.id)) list.postDelayed({
+                    armingRefresh -= camera.id
+                    if (!isDestroyed) fetchState(camera.id)
+                }, arming * 1000 + 1500)
             }
         }
 
@@ -169,32 +198,8 @@ class ViewerActivity : ComponentActivity() {
             }.setNegativeButton("Fermer", null).show()
     }
 
-    private fun chooseAutoAlarm(camera: PairingCode, mode: String, sound: String) {
-        val modes = MonitorService.AUTO_ALARM_LABELS.keys.toList()
-        AlertDialog.Builder(this).setTitle("Alarme automatique de ${camera.name}")
-            .setSingleChoiceItems(MonitorService.AUTO_ALARM_LABELS.values.toTypedArray(), modes.indexOf(mode).coerceAtLeast(0)) { dialog, which ->
-                dialog.dismiss()
-                val chosen = modes[which]
-                val setMode = mapOf("op" to "autoalarm", "value" to chosen)
-                if (chosen == MonitorService.AUTO_OFF) sendControl(camera.id, setMode)
-                else chooseAutoAlarmSound(camera, sound) { picked ->
-                    if (picked == null) sendControl(camera.id, setMode)
-                    else sendControl(camera.id, mapOf("op" to "autoalarmsound", "value" to picked), then = listOf(setMode))
-                }
-            }.setNegativeButton("Fermer", null).show()
-    }
-
-    /** [onChosen] reçoit le son choisi, ou null si l’utilisateur garde le son actuel. */
-    private fun chooseAutoAlarmSound(camera: PairingCode, current: String, onChosen: (String?) -> Unit) {
-        val ids = listOf(MonitorService.SIREN) + DeterrentSounds.Effect.entries.map { it.id }
-        var answered = false
-        AlertDialog.Builder(this).setTitle("Son joué par ${camera.name}")
-            .setSingleChoiceItems(ids.map { MonitorService.autoAlarmSoundLabel(it) }.toTypedArray(), ids.indexOf(current).coerceAtLeast(0)) { dialog, which ->
-                answered = true; dialog.dismiss(); onChosen(ids[which])
-            }
-            .setNegativeButton("Garder ${MonitorService.autoAlarmSoundLabel(current)}", null)
-            .setOnDismissListener { if (!answered) { answered = true; onChosen(null) } }
-            .show()
+    private fun sendControls(cameraId: String, requests: List<Map<String, String>>) {
+        if (requests.isNotEmpty()) sendControl(cameraId, requests.first(), then = requests.drop(1))
     }
 
     private fun confirmAlarm(camera: PairingCode) {

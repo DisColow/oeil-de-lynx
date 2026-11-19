@@ -88,6 +88,8 @@ class MonitorService : LifecycleService() {
         startForeground(NOTIFICATION_ID, notification("Initialisation de la caméra"))
         val preferences = getSharedPreferences("lynx", Context.MODE_PRIVATE)
         maxClipMs = preferences.getInt("max_clip_ms", 600_000).toLong()
+        armAutoAlarm() // démarrage de la surveillance : une minute pour quitter la pièce
+        appliedAutoMode = preferences.getString(PREF_AUTO_ALARM, AUTO_OFF) ?: AUTO_OFF
         useFrontCamera = preferences.getBoolean("front_camera", false)
         // Une veille en cours survit au redémarrage du service : la caméra reste éteinte.
         standby = preferences.getBoolean(PREF_STANDBY, false)
@@ -578,6 +580,8 @@ class MonitorService : LifecycleService() {
         "thr" to standbyThreshold().toString(),
         "aa" to autoAlarmMode(),
         "aas" to autoAlarmSound(),
+        // Secondes avant que l’alarme automatique soit armée (0 = armée, ou désactivée).
+        "aarm" to armingSecondsLeft().toString(),
         "clip" to lastClipId.toString()
     )
 
@@ -635,6 +639,25 @@ class MonitorService : LifecycleService() {
     @Volatile private var lastClipId = -1L
     @Volatile private var ownSoundUntil = 0L
     private var lastAutoAlarmAt = 0L
+    // Délai d’armement : rien ne se déclenche avant cette heure (le temps de quitter la pièce).
+    @Volatile private var autoAlarmArmedAt = 0L
+    private var appliedAutoMode = AUTO_OFF
+    private val armedHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val armedNotice = Runnable { if (!shuttingDown) publishLiveStatus() }
+
+    /** (Re)lance le compte à rebours d’1 minute avant que l’alarme automatique puisse se déclencher. */
+    private fun armAutoAlarm() {
+        autoAlarmArmedAt = SystemClock.elapsedRealtime() + AUTO_ALARM_ARMING_MS
+        // Les spectateurs voient le compte à rebours, puis « armée » quand il est écoulé.
+        armedHandler.removeCallbacks(armedNotice)
+        armedHandler.postDelayed(armedNotice, AUTO_ALARM_ARMING_MS + 500)
+    }
+
+    private fun armingSecondsLeft(): Long {
+        if (autoAlarmMode() == AUTO_OFF) return 0
+        val left = autoAlarmArmedAt - SystemClock.elapsedRealtime()
+        return if (left > 0) (left + 999) / 1000 else 0
+    }
 
     private fun prefs() = getSharedPreferences("lynx", Context.MODE_PRIVATE)
     private fun soundTriggersClips() = prefs().getBoolean(PREF_SOUND_TRIGGER, false)
@@ -644,6 +667,10 @@ class MonitorService : LifecycleService() {
     private fun playingOwnSound() = siren?.isRunning == true || SystemClock.elapsedRealtime() < ownSoundUntil
 
     private fun setAutoAlarm(mode: String? = null, sound: String? = null) {
+        // Activation (ou changement de déclencheur) : une minute avant de pouvoir sonner.
+        // (Comparé au dernier mode appliqué par le service : l’écran Réglages enregistre la préférence avant de l’envoyer.)
+        if (mode != null && mode != AUTO_OFF && mode != appliedAutoMode) armAutoAlarm()
+        mode?.let { appliedAutoMode = it }
         prefs().edit().apply { mode?.let { putString(PREF_AUTO_ALARM, it) }; sound?.let { putString(PREF_AUTO_ALARM_SOUND, it) } }.apply()
         // Le micro doit écouter (ou plus) selon le nouveau réglage.
         if (autoAlarmOn(DETECT_SOUND) || soundTriggersClips()) startSoundDetection() else stopSoundDetection()
@@ -654,6 +681,7 @@ class MonitorService : LifecycleService() {
     private fun onDetection(kind: String) {
         if (shuttingDown || standby || !autoAlarmOn(kind) || playingOwnSound()) return
         val now = SystemClock.elapsedRealtime()
+        if (now < autoAlarmArmedAt) return // pas encore armée
         if (lastAutoAlarmAt != 0L && now - lastAutoAlarmAt < AUTO_ALARM_COOLDOWN_MS) return
         lastAutoAlarmAt = now
         val sound = autoAlarmSound()
@@ -758,6 +786,7 @@ class MonitorService : LifecycleService() {
             lastFrameAt = 0L; lastMotionAt = 0L; lastSoundAt = 0L
         }
         updateStatus(if (useFrontCamera) "Surveillance · caméra avant" else "Surveillance · caméra arrière")
+        armAutoAlarm() // au sortir de la veille aussi, le temps de quitter la pièce
         startSoundDetection(); startLiveAudio()
         publishLiveStatus()
         sendBroadcast(Intent(ACTION_STANDBY_CHANGED).setPackage(packageName))
@@ -798,6 +827,7 @@ class MonitorService : LifecycleService() {
 
     override fun onDestroy() {
         shuttingDown = true
+        armedHandler.removeCallbacks(armedNotice)
         pendingCameraFacing = null
         recording?.stop(); stopSoundDetection()
         stopLive()
@@ -859,6 +889,7 @@ class MonitorService : LifecycleService() {
         const val AUTO_BOTH = "both"
         val AUTO_ALARM_MODES = setOf(AUTO_OFF, AUTO_MOTION, AUTO_SOUND, AUTO_BOTH)
         const val SIREN = "siren"
+        const val AUTO_ALARM_ARMING_MS = 60_000L
         private const val DETECT_MOTION = AUTO_MOTION
         private const val DETECT_SOUND = AUTO_SOUND
         private const val AUTO_ALARM_COOLDOWN_MS = 60_000L
