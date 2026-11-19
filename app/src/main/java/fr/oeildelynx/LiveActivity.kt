@@ -99,10 +99,12 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         val (battery, updateBattery) = LynxUi.batteryChip(this)
         showBattery = updateBattery
         top.addView(battery, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        top.addView(iconButton(R.drawable.ic_pip, "Image dans l’image") { enterPip(manual = true) })
         top.addView(iconButton(R.drawable.ic_gallery, "Galerie de la caméra") {
             startActivity(Intent(this, RemoteGalleryActivity::class.java).putExtra(EXTRA_CAMERA_ID, camera.id))
         })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        chrome += top
 
         // Bas de l’écran : bouton « Parler » (talkie-walkie), puis son, rotation et exposition.
         val panel = LinearLayout(this).apply {
@@ -135,6 +137,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         bottom.addView(alarm.first, LinearLayout.LayoutParams(0, -2, 1f))
         panel.addView(bottom, LinearLayout.LayoutParams(-1, -2))
         root.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        chrome += panel
         setContentView(root)
 
         cameraKey = camera.id
@@ -375,8 +378,8 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     }
 
     private fun iconButton(@DrawableRes icon: Int, description: String, action: () -> Unit) =
-        LynxUi.iconButton(this, icon, description, 0x66223029) { action() }.apply {
-            (layoutParams as LinearLayout.LayoutParams).leftMargin = LynxUi.dp(this@LiveActivity, 8)
+        LynxUi.iconButton(this, icon, description, 0x66223029, 40) { action() }.apply {
+            (layoutParams as LinearLayout.LayoutParams).leftMargin = LynxUi.dp(this@LiveActivity, 6)
         }
 
     /** Règle l’exposition de la caméra à distance ; la plage vient de l’état envoyé par la caméra. */
@@ -419,13 +422,94 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
     override fun onStop() {
         stopTalking()
         // Pas de flux en arrière-plan : économise la batterie et les données mobiles.
+        // (En image dans l’image, l’activité reste démarrée : le direct continue dans la petite fenêtre.)
         client?.stop()
+        // Fenêtre image dans l’image fermée (glissée vers la croix) : on quitte le direct.
+        // Écran éteint : on garde la fenêtre, le direct reprendra au déverrouillage.
+        val interactive = getSystemService(android.os.PowerManager::class.java)?.isInteractive != false
+        if ((leftPip || isInPictureInPictureMode) && interactive) finish()
         super.onStop()
     }
 
     override fun onResume() {
         super.onResume()
+        leftPip = false
         enableImmersiveMode()
+    }
+
+    override fun onDestroy() {
+        if (pipReceiverRegistered) { try { unregisterReceiver(pipReceiver) } catch (_: Exception) { }; pipReceiverRegistered = false }
+        super.onDestroy()
+    }
+
+    // ——— Image dans l’image : le direct continue dans une petite fenêtre au-dessus des autres applis. ———
+    private val chrome = mutableListOf<View>()
+    private var leftPip = false
+    private var pipRatio = android.util.Rational(16, 9)
+    private var pipAlarmShown = false
+    private var pipReceiverRegistered = false
+    private val pipReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            when (intent.action) {
+                ACTION_PIP_SOUND -> setSound(!soundOn)
+                ACTION_PIP_STOP_ALARM -> client?.sendRequest(mapOf("op" to "alarm", "value" to "0"))
+            }
+            updatePipParams()
+        }
+    }
+
+    private fun pipSupported() = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun pipAction(icon: Int, title: String, action: String, code: Int) = android.app.RemoteAction(
+        android.graphics.drawable.Icon.createWithResource(this, icon), title, title,
+        android.app.PendingIntent.getBroadcast(this, code, Intent(action).setPackage(packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+
+    private fun pipParams(): android.app.PictureInPictureParams {
+        val actions = mutableListOf(pipAction(if (soundOn) R.drawable.ic_volume else R.drawable.ic_volume_off,
+            if (soundOn) "Couper le son" else "Activer le son", ACTION_PIP_SOUND, 1))
+        if (lastStatus["alarm"] == "1") actions += pipAction(R.drawable.ic_stop, "Arrêter l’alarme", ACTION_PIP_STOP_ALARM, 2)
+        return android.app.PictureInPictureParams.Builder().setAspectRatio(pipRatio).setActions(actions).apply {
+            // Android 12+ : passe tout seul en petite fenêtre quand on quitte l’appli (bouton ou geste d’accueil).
+            if (android.os.Build.VERSION.SDK_INT >= 31) { setAutoEnterEnabled(shownBitmap != null); setSeamlessResizeEnabled(true) }
+        }.build()
+    }
+
+    /** Boutons de la petite fenêtre (son, arrêt de l’alarme), aussi pour l’entrée automatique d’Android 12+. */
+    private fun ensurePipReceiver() {
+        if (pipReceiverRegistered) return
+        val filter = android.content.IntentFilter().apply { addAction(ACTION_PIP_SOUND); addAction(ACTION_PIP_STOP_ALARM) }
+        androidx.core.content.ContextCompat.registerReceiver(this, pipReceiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        pipReceiverRegistered = true
+    }
+
+    private fun updatePipParams() {
+        if (!pipSupported() || isDestroyed) return
+        ensurePipReceiver()
+        try { setPictureInPictureParams(pipParams()) } catch (_: Exception) { }
+    }
+
+    private fun enterPip(manual: Boolean) {
+        if (!pipSupported()) { if (manual) Toast.makeText(this, "Image dans l’image non disponible sur ce téléphone.", Toast.LENGTH_LONG).show(); return }
+        if (!manual && shownBitmap == null) return // rien à montrer : on ne garde pas de fenêtre vide
+        ensurePipReceiver()
+        try { enterPictureInPictureMode(pipParams()) } catch (_: Exception) {
+            if (manual) Toast.makeText(this, "Image dans l’image désactivée pour Œil de Lynx dans les réglages Android.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Avant Android 12 : passage en petite fenêtre quand on appuie sur Accueil pendant le direct. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (android.os.Build.VERSION.SDK_INT < 31) enterPip(manual = false)
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        // Petite fenêtre : seulement l’image (et l’état de connexion si elle manque), sans boutons.
+        chrome.forEach { it.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE }
+        if (isInPictureInPictureMode) { meterMarker.visibility = View.GONE; stopTalking() }
+        if (!isInPictureInPictureMode) leftPip = true
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -445,13 +529,21 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         if (isDestroyed) { bitmap.recycle(); return@runOnUiThread }
         val previous = shownBitmap
         image.setImageBitmap(bitmap)
+        val firstFrame = shownBitmap == null
         shownBitmap = bitmap
+        // Proportions de la petite fenêtre = celles de l’image (limites d’Android : 1:2,39 à 2,39:1).
+        val ratio = bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)
+        val clamped = ratio.coerceIn(0.42f, 2.39f)
+        val wanted = android.util.Rational((clamped * 1000).toInt(), 1000)
+        if (firstFrame || wanted != pipRatio) { pipRatio = wanted; updatePipParams() }
         waiting.visibility = View.GONE
         previous?.takeIf { it !== bitmap }?.recycle()
     }
 
     override fun onStatus(fields: Map<String, String>) = runOnUiThread {
         lastStatus = fields
+        val alarmNow = fields["alarm"] == "1"
+        if (alarmNow != pipAlarmShown) { pipAlarmShown = alarmNow; updatePipParams() }
         val asleep = fields["standby"] == "1"
         if (::standbyButton.isInitialized) {
             standbyButton.visibility = if (asleep) View.VISIBLE else View.GONE
@@ -479,6 +571,8 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
 
     companion object {
         const val EXTRA_CAMERA_ID = "camera_id"
+        private const val ACTION_PIP_SOUND = "fr.oeildelynx.action.PIP_SOUND"
+        private const val ACTION_PIP_STOP_ALARM = "fr.oeildelynx.action.PIP_STOP_ALARM"
 
         /** Sources des enregistrements (Wikimedia Commons), découpés, amplifiés et convertis. */
         private const val SOUND_CREDITS =
