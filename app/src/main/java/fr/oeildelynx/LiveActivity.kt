@@ -439,6 +439,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         /** Sources des enregistrements (Wikimedia Commons), découpés, amplifiés et convertis. */
         private const val SOUND_CREDITS =
             "Enregistrements issus de Wikimedia Commons, modifiés (découpe, amplification, conversion) :\n\n" +
+            "• Chat en colère : enregistrement fourni par le propriétaire de l’application\n" +
             "• Feulement : « Cat hissing » — Zabuhailo — CC0\n" +
             "• Bombe d’air : « Can of compressed air » — stilgar — domaine public\n" +
             "• Aboiements : « Barking of a dog » — Amada44 — CC BY-SA 3.0 (creativecommons.org/licenses/by-sa/3.0)\n" +

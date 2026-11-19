@@ -12,4 +12,6 @@ Les sons dissuasifs de l’application (`app/src/main/res/raw/fx_*.ogg`) sont de
 | Emballage froissé (`fx_foil`) | [Food wrapper crumpling.ogg](https://commons.wikimedia.org/wiki/File:Food_wrapper_crumpling.ogg) | stilgar | Domaine public |
 | Corne de brume (`fx_horn`) | [Fog signal Bremerhaven.ogg](https://commons.wikimedia.org/wiki/File:Fog_signal_Bremerhaven.ogg) | Tvabutzku1234 | CC0 1.0 (domaine public) |
 
+| Chat en colère (`fx_angrycat`) | « Miaulement de chat en colère (chat méchant) » | Fourni par le propriétaire de l’application | **Source et licence à confirmer** avant toute diffusion publique (Play Store) |
+
 Le « son très aigu » est généré par l’application. Les sons dont l’enregistrement n’est pas fourni sont synthétisés par l’application.

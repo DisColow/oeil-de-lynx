@@ -21,6 +21,7 @@ internal object DeterrentSounds {
      * la version synthétisée ne sert que si l’enregistrement manque ou ne peut pas être lu.
      */
     enum class Effect(val id: String, val label: String, val description: String, val recording: String?) {
+        ANGRY_CAT("angrycat", "Chat en colère", "Miaulements furieux d’un chat méchant", "fx_angrycat"),
         HISS("hiss", "Feulement", "Vrai chat qui feule", "fx_hiss"),
         GROWL_HISS("growl", "Grognement + feulement", "Grondement grave puis feulement (synthétisé)", "fx_growl"),
         AIR("air", "Bombe d’air « pschht »", "Jet d’air comprimé, très efficace", "fx_air"),
@@ -39,6 +40,7 @@ internal object DeterrentSounds {
         val random = Random(seed)
         val signal = when (effect) {
             Effect.HISS -> hiss(random, 1.4)
+            Effect.ANGRY_CAT -> sequence(growl(random, 1.2), hiss(random, 1.0))
             Effect.GROWL_HISS -> sequence(growl(random, 0.9), silence(0.05), hiss(random, 1.2))
             Effect.AIR -> air(random, 1.6)
             Effect.CLAP -> sequence(*Array(3) { sequence(clap(random), silence(0.22)) })
