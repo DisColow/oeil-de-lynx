@@ -416,8 +416,9 @@ class MonitorService : LifecycleService() {
         // un clip déclenché par le son s’arrête donc aussi faute de mouvement).
         val lastActivity = maxOf(lastMotionAt, lastSoundAt)
         if (now - lastActivity > STOP_AFTER_STILL_MS) recording?.stop()
-        // Limite chaque clip afin qu’un déclencheur permanent ne remplisse pas le stockage sans fin.
-        if (now - recordingSince > maxClipMs) recording?.stop()
+        // Limite chaque clip afin qu’un déclencheur permanent ne remplisse pas le stockage sans fin
+        // (0 = pas de découpe : seule la fin du mouvement arrête le clip).
+        if (maxClipMs > 0 && now - recordingSince > maxClipMs) recording?.stop()
     }
 
     private fun stopSoundDetection() {

@@ -44,6 +44,16 @@ class RemoteGalleryActivity : ComponentActivity() {
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
     private var player: ClipPlayer? = null
+    // Page de la liste gardée pendant la lecture : au retour, même défilement et miniatures déjà là.
+    private var listPage: View? = null
+    private lateinit var scroll: ScrollView
+    private var clips: List<Clip> = emptyList()
+    private var seen: MutableSet<String> = mutableSetOf()
+    private val rows = mutableMapOf<String, LinearLayout>()
+    private val chipSlots = mutableMapOf<String, FrameLayout>()
+    private val unreadDots = mutableMapOf<String, View>()
+    private var playingIndex = -1
+    private val scope get() = "cam_$cameraId"
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy · HH:mm:ss", Locale.getDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,13 +79,16 @@ class RemoteGalleryActivity : ComponentActivity() {
         status = LynxUi.body(this, "Connexion à la caméra…", 13.5f).apply { setPadding(dp(20), 0, dp(20), dp(6)) }
         page.addView(status)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), dp(20)) }
-        page.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll = ScrollView(this).apply { addView(list) }
+        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.removeAllViews()
         root.addView(page)
+        listPage = page
     }
 
     /** (Re)connexion puis liste des clips ; les miniatures suivent une à une. */
     private fun load() {
+        if (clips.isNotEmpty()) saveScroll()
         status.text = "Connexion à la caméra…"
         list.removeAllViews()
         // Actualiser : on abandonne le chargement en cours (miniatures) et on repart d’une connexion neuve.
@@ -133,6 +146,13 @@ class RemoteGalleryActivity : ComponentActivity() {
     }
 
     private fun showClips(clips: List<Clip>): List<ImageView> {
+        this.clips = clips
+        seen = ClipMemory.seen(this, scope, clips.map { it.id })
+        rows.clear(); chipSlots.clear(); unreadDots.clear()
+        val restore = ClipMemory.scroll(this, scope)
+        if (restore != null) scroll.post {
+            rows[restore.first]?.let { row -> scroll.scrollTo(0, (row.top + restore.second).coerceAtLeast(0)) }
+        }
         status.text = if (clips.isEmpty()) "Aucun clip sur la caméra." else "${clips.size} clip(s) · toucher pour télécharger et lire"
         return clips.map { clip ->
             val row = LinearLayout(this).apply {
@@ -146,6 +166,9 @@ class RemoteGalleryActivity : ComponentActivity() {
             frame.addView(ImageView(this).apply {
                 setImageResource(R.drawable.ic_play); val pad = dp(7); setPadding(pad, pad, pad, pad); background = LynxUi.circle(0x99000000.toInt())
             }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+            val dot = View(this).apply { background = LynxUi.circle(LynxUi.ACCENT); visibility = if (clip.id in seen) View.GONE else View.VISIBLE }
+            frame.addView(dot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.TOP or Gravity.START).apply { setMargins(dp(7), dp(7), 0, 0) })
+            unreadDots[clip.id] = dot
             row.addView(frame, LinearLayout.LayoutParams(dp(112), dp(80)))
             val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
             details.addView(TextView(this).apply {
@@ -154,7 +177,11 @@ class RemoteGalleryActivity : ComponentActivity() {
             })
             details.addView(LynxUi.body(this, SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(Date(clip.start)), 13f).apply { setPadding(0, dp(3), 0, 0) })
             details.addView(LynxUi.body(this, "${formatDuration(clip.duration)} · ${formatSize(clip.size)}", 12f, LynxUi.ACCENT).apply { setPadding(0, dp(6), 0, 0) })
+            val slot = FrameLayout(this).apply { addView(ClipMemory.chip(this@RemoteGalleryActivity, clip.id in seen)) }
+            chipSlots[clip.id] = slot
+            details.addView(slot, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
             row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
+            rows[clip.id] = row
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(9) })
             thumb
         }
@@ -242,7 +269,10 @@ class RemoteGalleryActivity : ComponentActivity() {
                 downloadRequested = false
                 runOnUiThread {
                     root.removeView(overlay)
-                    if (!isDestroyed) status.text = if (cancelled) "Téléchargement annulé." else "Téléchargement interrompu : ${error.message ?: "erreur réseau"}"
+                    val message = if (cancelled) "Téléchargement annulé." else "Téléchargement interrompu : ${error.message ?: "erreur réseau"}"
+                    if (!isDestroyed) status.text = message
+                    // En lecture, la liste (et son message) n’est pas visible.
+                    if (!isDestroyed && player != null && !cancelled) android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -256,16 +286,28 @@ class RemoteGalleryActivity : ComponentActivity() {
     }
 
     private fun play(file: File, clip: Clip) {
+        if (player == null) saveScroll()
+        player?.release(); player = null
+        playingIndex = clips.indexOfFirst { it.id == clip.id }
+        markSeen(clip.id)
         root.removeAllViews()
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK) }
         val video = ClipPlayer(this).apply {
             setBackgroundColor(Color.BLACK)
             onError = { status.text = "Impossible de lire cette vidéo." }
         }
-        page.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start)),
+        val position = if (playingIndex >= 0) " · ${playingIndex + 1}/${clips.size}" else ""
+        page.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(clip.start)) + position,
             LynxUi.iconButton(this, R.drawable.ic_rotate, "Pivoter la vidéo", 0x66223029) { video.rotateQuarter() }) { showList() })
-        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo.
-        page.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo ;
+        // flèches sur les bords pour télécharger et lire le clip voisin.
+        val stage = FrameLayout(this)
+        stage.addView(video, FrameLayout.LayoutParams(-1, -1))
+        val index = playingIndex
+        LynxUi.clipArrows(this, stage, hasPrevious = index > 0, hasNext = index in 0 until clips.size - 1,
+            onPrevious = { if (!downloadRequested) download(clips[index - 1]) },
+            onNext = { if (!downloadRequested) download(clips[index + 1]) })
+        page.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(page)
         player = video
         video.play(Uri.fromFile(file))
@@ -273,8 +315,37 @@ class RemoteGalleryActivity : ComponentActivity() {
 
     private fun showList() {
         player?.release(); player = null
-        buildList(ViewerStore.find(this, cameraId)?.name ?: "Caméra")
-        load()
+        val page = listPage
+        if (page == null || clips.isEmpty()) { buildList(ViewerStore.find(this, cameraId)?.name ?: "Caméra"); load(); return }
+        root.removeAllViews()
+        root.addView(page)
+        // Après navigation par flèches : le dernier clip regardé reste visible.
+        clips.getOrNull(playingIndex)?.id?.let { id -> rows[id]?.let { row -> scroll.post {
+            if (row.top < scroll.scrollY || row.bottom > scroll.scrollY + scroll.height) scroll.scrollTo(0, (row.top - dp(40)).coerceAtLeast(0))
+        } } }
+        playingIndex = -1
+        // Reprend les miniatures interrompues par le téléchargement.
+        worker.execute { fetchThumbnails() }
+    }
+
+    private fun markSeen(id: String) {
+        if (!seen.add(id)) return
+        ClipMemory.save(this, scope, seen)
+        unreadDots[id]?.visibility = View.GONE
+        chipSlots[id]?.let { slot -> slot.removeAllViews(); slot.addView(ClipMemory.chip(this, true)) }
+    }
+
+    /** Mémorise le clip en haut de la liste visible, pour la prochaine ouverture. */
+    private fun saveScroll() {
+        if (!::scroll.isInitialized || clips.isEmpty()) return
+        val y = scroll.scrollY
+        val first = clips.firstOrNull { clip -> rows[clip.id]?.let { it.bottom > y } == true } ?: return
+        ClipMemory.saveScroll(this, scope, first.id, y - (rows[first.id]?.top ?: 0))
+    }
+
+    override fun onPause() {
+        if (player == null) saveScroll()
+        super.onPause()
     }
 
     /** Garde au plus ~300 Mo de clips téléchargés, en supprimant les plus anciens. */

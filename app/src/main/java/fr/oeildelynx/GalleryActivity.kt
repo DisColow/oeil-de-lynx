@@ -51,6 +51,14 @@ class GalleryActivity : ComponentActivity() {
     private val card = LynxUi.CARD
     private val accent = Color.rgb(140, 210, 162)
     private val thumbnailLoader = Executors.newSingleThreadExecutor()
+    private var seen: MutableSet<String> = mutableSetOf()
+    // Clip en lecture (navigation par flèches) ; null sur la liste.
+    private var playingIndex = -1
+    private var navigated = false
+    // Suppressions refusées par Android (clips créés avant une réinstallation) : confirmation système.
+    private val deleteRequest = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) {
+        reloadCaptures()
+    }
     private val thumbnails = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
@@ -61,10 +69,27 @@ class GalleryActivity : ComponentActivity() {
         enableImmersiveMode()
         buildGallery()
         reloadCaptures()
-        intent.getStringExtra(EXTRA_FOCUS_NAME)?.let { name ->
-            val index = captures.indexOfFirst { it.name == name }
-            if (index >= 0) list.setSelection(index)
-        }
+        val focus = intent.getStringExtra(EXTRA_FOCUS_NAME)
+        val index = focus?.let { name -> captures.indexOfFirst { it.name == name } } ?: -1
+        if (index >= 0) list.setSelection(index) else restoreScroll()
+    }
+
+    override fun onPause() {
+        if (player == null) saveScroll()
+        super.onPause()
+    }
+
+    /** Mémorise le clip en haut de la liste (et son décalage) : retrouvé au retour de la lecture et à la prochaine ouverture. */
+    private fun saveScroll() {
+        if (!::list.isInitialized) return
+        val first = list.firstVisiblePosition
+        ClipMemory.saveScroll(this, SCOPE, captures.getOrNull(first)?.name, list.getChildAt(0)?.top ?: 0)
+    }
+
+    private fun restoreScroll() {
+        val (name, offset) = ClipMemory.scroll(this, SCOPE) ?: return
+        val index = captures.indexOfFirst { it.name == name }
+        if (index >= 0) list.setSelectionFromTop(index, offset)
     }
 
     override fun onResume() {
@@ -83,7 +108,8 @@ class GalleryActivity : ComponentActivity() {
             textSize = 12f; setTextColor(LynxUi.ON_ACCENT); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; visibility = View.GONE
             setPadding(dp(12), dp(6), dp(12), dp(6)); background = LynxUi.rounded(this@GalleryActivity, LynxUi.ACCENT, 14)
         }
-        root.addView(LynxUi.header(this, "Galerie", "Clips de surveillance", selectionCount) { finish() })
+        val menu = LynxUi.iconButton(this, R.drawable.ic_more, "Plus d’options", 0x66223029) { showMenu() }
+        root.addView(LynxUi.header(this, "Galerie", "Clips de surveillance", selectionCount, menu) { finish() })
 
         list = ListView(this).apply {
             divider = null; dividerHeight = dp(10); setPadding(dp(16), dp(2), dp(16), dp(16)); clipToPadding = false
@@ -153,6 +179,7 @@ class GalleryActivity : ComponentActivity() {
             }
         }
         captures.sortByDescending { it.startMs }
+        seen = ClipMemory.seen(this, SCOPE, captures.map { it.name })
         listAdapter?.notifyDataSetChanged()
     }
 
@@ -186,6 +213,9 @@ class GalleryActivity : ComponentActivity() {
                 val pad = dp(7); setPadding(pad, pad, pad, pad)
                 background = LynxUi.circle(if (isSelected) LynxUi.ACCENT else 0x99000000.toInt())
             }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+            if (capture.name !in seen && !isSelected) frame.addView(View(this@GalleryActivity).apply {
+                background = LynxUi.circle(LynxUi.ACCENT)
+            }, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.TOP or Gravity.START).apply { setMargins(dp(7), dp(7), 0, 0) })
             row.addView(frame, LinearLayout.LayoutParams(dp(112), dp(80)))
 
             val details = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
@@ -199,7 +229,8 @@ class GalleryActivity : ComponentActivity() {
                 text = "${time.format(Date(capture.startMs))} → ${time.format(Date(capture.startMs + capture.durationMs))}"
                 textSize = 13f; setTextColor(LynxUi.MUTED); setPadding(0, dp(3), 0, 0)
             })
-            details.addView(LinearLayout(this@GalleryActivity).apply {
+            val chips = LinearLayout(this@GalleryActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            chips.addView(LinearLayout(this@GalleryActivity).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(3), dp(10), dp(3))
                 background = LynxUi.rounded(this@GalleryActivity, 0xff1f3328.toInt(), 10)
                 addView(LynxUi.icon(this@GalleryActivity, R.drawable.ic_timer, LynxUi.ACCENT, 13))
@@ -207,7 +238,9 @@ class GalleryActivity : ComponentActivity() {
                     text = formatDuration(capture.durationMs); textSize = 11.5f; setTextColor(LynxUi.ACCENT); setPadding(dp(5), 0, 0, 0)
                     typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
                 })
-            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            })
+            chips.addView(ClipMemory.chip(this@GalleryActivity, capture.name in seen), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
+            details.addView(chips, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
             row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
             row.setOnClickListener {
                 if (selected.isNotEmpty()) toggleSelection(capture)
@@ -262,18 +295,59 @@ class GalleryActivity : ComponentActivity() {
             .setMessage("${selected.size} élément(s) seront supprimés définitivement.")
             .setNegativeButton("Annuler", null)
             .setPositiveButton("Supprimer") { _: DialogInterface, _: Int ->
-                captures.filter { selected.contains(it.name) }.forEach { capture ->
-                    try {
-                        if (capture.legacyFile != null) capture.legacyFile.delete()
-                        else contentResolver.delete(capture.uri, null, null)
-                    } catch (_: Exception) { }
-                }
+                val chosen = captures.filter { selected.contains(it.name) }
                 selected.clear(); deleteButton.visibility = View.GONE; selectionCount.visibility = View.GONE
-                reloadCaptures()
+                deleteCaptures(chosen)
             }.show()
     }
 
+    private fun showMenu() {
+        LynxUi.sheet(this, "Galerie", listOf(
+            LynxUi.SheetItem(R.drawable.ic_check, "Tout marquer comme vu", "${captures.count { it.name !in seen }} clip(s) non lu(s)") {
+                seen.addAll(captures.map { it.name }); ClipMemory.save(this, SCOPE, seen); listAdapter?.notifyDataSetChanged()
+            },
+            LynxUi.SheetItem(R.drawable.ic_trash, "Supprimer tous les enregistrements", "${captures.size} clip(s)", danger = true) { confirmDeleteAll() }
+        ))
+    }
+
+    private fun confirmDeleteAll() {
+        if (captures.isEmpty()) { Toast.makeText(this, "La galerie est déjà vide.", Toast.LENGTH_SHORT).show(); return }
+        AlertDialog.Builder(this).setTitle("Supprimer tous les enregistrements ?")
+            .setMessage("Les ${captures.size} clip(s) de la galerie seront supprimés définitivement de ce téléphone (et de Photos). " +
+                "Les clips présents sur d’autres téléphones ne sont pas touchés.")
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Tout supprimer") { _, _ ->
+                selected.clear(); deleteButton.visibility = View.GONE; selectionCount.visibility = View.GONE
+                deleteCaptures(captures.toList())
+            }.show()
+    }
+
+    /**
+     * Supprimer une entrée MediaStore la retire de la liste et des applications Photos compatibles.
+     * Les clips qu’Android ne laisse pas supprimer directement (créés avant une réinstallation de
+     * l’application) passent par la confirmation système.
+     */
+    private fun deleteCaptures(targets: List<Capture>) {
+        val refused = mutableListOf<Uri>()
+        targets.forEach { capture ->
+            try {
+                if (capture.legacyFile != null) capture.legacyFile.delete()
+                else contentResolver.delete(capture.uri, null, null)
+            } catch (_: SecurityException) { if (capture.legacyFile == null) refused += capture.uri } catch (_: Exception) { }
+        }
+        reloadCaptures()
+        if (refused.isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                val request = MediaStore.createDeleteRequest(contentResolver, refused)
+                deleteRequest.launch(androidx.activity.result.IntentSenderRequest.Builder(request.intentSender).build())
+            } catch (_: Exception) { }
+        }
+    }
+
     private fun play(capture: Capture) {
+        if (player == null) { saveScroll(); navigated = false }
+        playingIndex = captures.indexOf(capture)
+        if (seen.add(capture.name)) ClipMemory.save(this, SCOPE, seen)
         player?.release()
         root.removeAllViews()
         val video = ClipPlayer(this).apply {
@@ -281,10 +355,17 @@ class GalleryActivity : ComponentActivity() {
             onError = { Toast.makeText(this@GalleryActivity, "Impossible de lire cette vidéo.", Toast.LENGTH_SHORT).show() }
         }
         player = video
-        root.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(capture.startMs)),
+        val position = if (playingIndex >= 0) " · ${playingIndex + 1}/${captures.size}" else ""
+        root.addView(LynxUi.header(this, "Lecture", SimpleDateFormat("EEE d MMM · HH:mm:ss", Locale.FRANCE).format(Date(capture.startMs)) + position,
             LynxUi.iconButton(this, R.drawable.ic_rotate, "Pivoter la vidéo", 0x66223029) { video.rotateQuarter() }) { showList() })
-        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo.
-        root.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Le lecteur occupe toute la place disponible et garde les proportions de la vidéo ;
+        // flèches sur les bords : clip précédent (plus récent, à gauche) ou suivant (plus ancien, à droite), comme dans la liste.
+        val stage = FrameLayout(this)
+        stage.addView(video, FrameLayout.LayoutParams(-1, -1))
+        LynxUi.clipArrows(this, stage, hasPrevious = playingIndex > 0, hasNext = playingIndex in 0 until captures.size - 1,
+            onPrevious = { navigated = true; play(captures[playingIndex - 1]) },
+            onNext = { navigated = true; play(captures[playingIndex + 1]) })
+        root.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
         val info = TextView(this).apply {
             val formatter = SimpleDateFormat("EEEE d MMMM yyyy · HH:mm:ss", Locale.getDefault())
             text = "Début de la capture\n${formatter.format(Date(capture.startMs))}"
@@ -296,9 +377,14 @@ class GalleryActivity : ComponentActivity() {
 
     private fun showList() {
         player?.release(); player = null
+        val last = captures.getOrNull(playingIndex)?.name
+        playingIndex = -1
         root.removeAllViews(); setContentView(root)
         buildGallery()
         reloadCaptures()
+        // Retour à la même position ; après navigation par flèches, sur le dernier clip regardé.
+        val index = if (navigated && last != null) captures.indexOfFirst { it.name == last } else -1
+        if (index >= 0) list.setSelectionFromTop(index, dp(40)) else restoreScroll()
     }
 
     private fun duration(uri: Uri): Long = try {
@@ -324,5 +410,8 @@ class GalleryActivity : ComponentActivity() {
 
     override fun onDestroy() { player?.release(); thumbnailLoader.shutdownNow(); super.onDestroy() }
 
-    companion object { const val EXTRA_FOCUS_NAME = "focus_capture_name" }
+    companion object {
+        const val EXTRA_FOCUS_NAME = "focus_capture_name"
+        private const val SCOPE = "local"
+    }
 }

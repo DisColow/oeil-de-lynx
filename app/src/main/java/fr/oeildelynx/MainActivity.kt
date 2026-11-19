@@ -431,7 +431,7 @@ class MainActivity : ComponentActivity() {
     /** Menu Réglages : réglages des clips, appairage côté caméra et mode spectateur. */
     private fun showMenu() {
         val soundOn = prefs.getBoolean(MonitorService.PREF_SOUND_TRIGGER, false)
-        val durations = mapOf(30_000 to "30 secondes", 90_000 to "1 min 30", 180_000 to "3 minutes", 300_000 to "5 minutes", 600_000 to "10 minutes")
+        val durations = mapOf(30_000 to "30 secondes", 90_000 to "1 min 30", 180_000 to "3 minutes", 300_000 to "5 minutes", 600_000 to "10 minutes", 0 to "Sans découpe")
         val items = listOf(
             LynxUi.SheetItem(R.drawable.ic_sun, "Exposition", Exposure.range(this).let { Exposure.label(it.index, it.step) }) { showExposure() },
             LynxUi.SheetItem(R.drawable.ic_motion, "Sensibilité au mouvement", MonitorService.motionSensitivity(this).label) { showSensitivity() },
@@ -449,7 +449,7 @@ class MainActivity : ComponentActivity() {
                 }) { showAutoAlarm() },
             LynxUi.SheetItem(R.drawable.ic_battery, "Veille automatique (batterie)",
                 prefs.getInt(MonitorService.PREF_STANDBY_THRESHOLD, MonitorService.DEFAULT_STANDBY_THRESHOLD).let { if (it == 0) "Désactivée" else "Sous $it %, reprise au branchement" }) { showStandbyThreshold() },
-            LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", "${durations[prefs.getInt("max_clip_ms", 600_000)] ?: "10 minutes"} · découpe les mouvements très longs") { showRules() },
+            LynxUi.SheetItem(R.drawable.ic_timer, "Durée maximale des clips", prefs.getInt("max_clip_ms", 600_000).let { if (it == 0) "Sans découpe · un seul clip tant que ça bouge" else "${durations[it] ?: "10 minutes"} · découpe les mouvements très longs" }) { showRules() },
             LynxUi.SheetItem(R.drawable.ic_qr, "Appairer un téléphone spectateur", "QR code pour le direct et les alertes") { startActivity(Intent(this, PairingActivity::class.java)) },
             LynxUi.SheetItem(R.drawable.ic_eye, "Regarder une caméra", "Ce téléphone devient spectateur") { startActivity(Intent(this, ViewerActivity::class.java)) }
         )
@@ -566,8 +566,9 @@ class MainActivity : ComponentActivity() {
 
     private fun showRules() {
         // Enregistre la durée en millisecondes ; le service relit cette limite pendant chaque clip.
-        val durations = intArrayOf(30_000, 90_000, 180_000, 300_000, 600_000)
-        val labels = arrayOf("30 secondes", "1 minute 30", "3 minutes", "5 minutes", "10 minutes")
+        // 0 = pas de découpe automatique.
+        val durations = intArrayOf(30_000, 90_000, 180_000, 300_000, 600_000, 0)
+        val labels = arrayOf("30 secondes", "1 minute 30", "3 minutes", "5 minutes", "10 minutes", "Sans découpe (un seul clip tant que ça bouge)")
         val selected = durations.indexOf(prefs.getInt("max_clip_ms", 600_000)).coerceAtLeast(0)
         // Explication au-dessus des choix : un message d’AlertDialog masquerait la liste, d’où une vue dédiée.
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(24), 0) }
@@ -578,7 +579,9 @@ class MainActivity : ComponentActivity() {
                 "Rien n’est perdu, la vidéo est simplement découpée en plusieurs fichiers.", 13.5f, LynxUi.TEXT))
         content.addView(LynxUi.body(this,
             "Plus court : fichiers plus légers, plus faciles à consulter et à télécharger depuis le téléphone spectateur. " +
-                "Plus long : moins de fichiers lors d’une longue activité. Un clip pèse environ 10 à 20 Mo par minute.", 12.5f)
+                "Plus long : moins de fichiers lors d’une longue activité. « Sans découpe » : le clip ne s’arrête que 10 secondes après la fin " +
+                "du mouvement, même s’il dure des heures (attention au stockage et au téléchargement depuis le spectateur). " +
+                "Un clip pèse environ 10 à 20 Mo par minute.", 12.5f)
             .apply { setPadding(0, dp(10), 0, dp(6)) })
         val group = RadioGroup(this)
         lateinit var dialog: androidx.appcompat.app.AlertDialog

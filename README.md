@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.22.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.23.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.22.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.23.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -13,9 +13,10 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - Splash screen de lancement et icône adaptative Android assortis : œil de chat vert sur fond vert forêt, avec pupille verticale.
 - Démarrage de la surveillance avec aperçu visible pendant 1 minute, puis masquage automatique. Pendant une surveillance active, l’aperçu peut être affiché manuellement ; il se masque de nouveau après 1 min 30.
 - Détection locale du mouvement, avec trois niveaux de sensibilité (Réglages). Le déclenchement par le son est une option, désactivée par défaut.
-- Enregistrement MP4 avec piste audio dès qu’un mouvement est détecté ; le clip s’arrête 10 secondes après la fin du mouvement. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min et 10 min.
+- Enregistrement MP4 avec piste audio dès qu’un mouvement est détecté ; le clip s’arrête 10 secondes après la fin du mouvement. Les durées maximales proposées sont 30 s, 1 min 30, 3 min, 5 min, 10 min, ou « Sans découpe » (un seul clip tant que le mouvement continue).
 - Notification Android en priorité haute (bannière et son) sur le téléphone caméra à chaque détection. La toucher ouvre la galerie sur la capture correspondante.
 - Galerie plein écran : miniature (image prise à ~1 s du début, chargée en arrière-plan), début et fin du clip, lecture vidéo, sélection multiple et suppression avec confirmation.
+- La galerie retient sa position de défilement (au retour de la lecture et à la prochaine ouverture), affiche une pastille **Non lu / Vu** sur chaque clip (« Tout marquer comme vu » dans le menu ⋯), et propose **Supprimer tous les enregistrements** (menu ⋯, avec confirmation). En lecture, des **flèches sur les bords gauche et droit** passent au clip précédent (plus récent) ou suivant (plus ancien). La galerie à distance (spectateur) a les mêmes flèches, pastilles et mémoire de position.
 - Enregistrement dans `Movies/Œil de Lynx`, donc consultable depuis les applications photo compatibles.
 - **Veille** : la surveillance peut être mise en veille (caméra, analyse et micro coupés) et reprise à distance depuis le spectateur, ou depuis la caméra ; mise en veille automatique sous 20 % de batterie hors charge, reprise automatique au branchement.
 - **Batterie de la caméra** visible sur le téléphone spectateur : pourcentage, en charge ou non, dans le direct et sous chaque caméra de la liste (vert, orange sous 50 %, rouge sous 20 %).
@@ -218,11 +219,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.22.0
-git push origin v1.22.0
+git tag v1.23.0
+git push origin v1.23.0
 ```
 
-Remplacer `1.22.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
+Remplacer `1.23.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 
