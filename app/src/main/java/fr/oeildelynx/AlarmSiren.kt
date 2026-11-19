@@ -20,8 +20,12 @@ internal class AlarmSiren(private val context: Context, private val onStopped: (
         private set
     private var thread: Thread? = null
 
-    @Synchronized fun start() {
+    @Volatile private var durationMs = MAX_DURATION_MS
+
+    /** Démarre la sirène pour [maxMs] au plus (2 min par défaut ; 30 s pour l’alarme automatique). */
+    @Synchronized fun start(maxMs: Long = MAX_DURATION_MS) {
         if (isRunning) return
+        durationMs = maxMs
         isRunning = true
         AlarmVolume.raise(context)
         vibrate(true)
@@ -53,7 +57,7 @@ internal class AlarmSiren(private val context: Context, private val onStopped: (
         val started = System.currentTimeMillis()
         var index = 0
         try {
-            while (isRunning && !Thread.currentThread().isInterrupted && System.currentTimeMillis() - started < MAX_DURATION_MS) {
+            while (isRunning && !Thread.currentThread().isInterrupted && System.currentTimeMillis() - started < durationMs) {
                 val chunk = tones[index++ % 2]
                 track.write(chunk, 0, chunk.size)
             }
