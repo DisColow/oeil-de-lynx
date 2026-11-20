@@ -536,6 +536,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val customSound = CustomSoundUi(this)
+    private var testBoard: SoundBoard? = null
 
     private fun showAutoAlarmSound() {
         val state = mapOf(
@@ -548,7 +549,10 @@ class MainActivity : ComponentActivity() {
 
     /** Son personnalisé enregistré ou importé directement sur ce téléphone caméra. */
     private fun pickCustomSound() {
-        customSound.open("Son personnalisé de l’alarme") { bytes, result ->
+        customSound.open("Son personnalisé de l’alarme", test = {
+            // Essai sur ce téléphone, au volume d’alarme.
+            (testBoard ?: SoundBoard(applicationContext).also { testBoard = it }).playFile(CustomAlarmSound.file(this), CustomAlarmSound.MAX_PLAY_MS)
+        }) { bytes, result ->
             val error = CustomAlarmSound.save(this, bytes)
             if (error == null) runOnUiThread { applyAutoAlarm("autoalarmsound", CustomAlarmSound.ID, MonitorService.PREF_AUTO_ALARM_SOUND) }
             result(error)
@@ -624,6 +628,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        testBoard?.release(); testBoard = null
         handler.removeCallbacksAndMessages(null)
         if (monitorReceiverRegistered) {
             unregisterReceiver(monitorStateReceiver)

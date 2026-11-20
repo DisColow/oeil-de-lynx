@@ -284,7 +284,7 @@ internal class LiveServer(
                         }
                         channel.send(LiveProtocol.TYPE_END)
                     }
-                    "settings", "alarm", "sound", "standby", "threshold", "autoalarm", "autoalarmsound" ->
+                    "settings", "alarm", "sound", "standby", "threshold", "autoalarm", "autoalarmsound", "fx" ->
                         channel.send(LiveProtocol.TYPE_STATUS, LiveProtocol.encodeFields(onControl(request)).toByteArray(Charsets.UTF_8))
                     "customsound" -> {
                         // Le fichier suit la requête, en un seul enregistrement (3 Mo au plus).
