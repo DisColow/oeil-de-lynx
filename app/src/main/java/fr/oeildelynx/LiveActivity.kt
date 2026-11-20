@@ -254,7 +254,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             val on = AutoAlarmUi.isOn(status)
             AutoAlarmUi.remember(this, cameraId, status["aa"])
             val onCustom = {
-                customSound.open("Son personnalisé · $name", test = { client?.sendRequest(mapOf("op" to "fx", "id" to CustomAlarmSound.ID)) }) { bytes, result ->
+                customSound.open("Son personnalisé · $name") { bytes, result ->
                     AutoAlarmUi.uploadCustom(this, cameraId, bytes) { _, error -> result(error) }
                 }
             }
@@ -300,10 +300,35 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(14) })
         box.addView(LynxUi.title(this, "Sons sur la caméra", 18f))
         box.addView(LynxUi.body(this, "Joués au volume maximum, même en silencieux. Toucher pour jouer.", 12.5f).apply { setPadding(0, dp(4), 0, dp(12)) })
-        // Sons intégrés, plus le son personnalisé de la caméra s’il y en a un.
+        // Son personnalisé en tête : le jouer s’il existe (appui long pour le changer), sinon en ajouter un.
+        // (Caméras 1.25.0 et plus, qui annoncent « aac ».)
+        if (lastStatus["aac"] != null) {
+            val has = lastStatus["aac"] == "1"
+            box.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(12), dp(12))
+                background = LynxUi.pressable(this@LiveActivity, if (has) LynxUi.ACCENT_STRONG else LynxUi.CARD_HIGH, 16)
+                contentDescription = if (has) "Jouer mon son" else "Ajouter mon son"
+                addView(LynxUi.icon(this@LiveActivity, if (has) R.drawable.ic_play else R.drawable.ic_mic, LynxUi.TEXT, 22))
+                addView(LinearLayout(this@LiveActivity).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0)
+                    addView(TextView(this@LiveActivity).apply {
+                        text = if (has) "Mon son" else "＋ Ajouter mon son"; textSize = 15f; setTextColor(LynxUi.TEXT)
+                        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                    })
+                    addView(LynxUi.body(this@LiveActivity, if (has) "Toucher pour jouer · appui long pour le changer"
+                        else "Enregistre un message ou choisis un fichier audio, puis joue-le quand tu veux", 11.5f, LynxUi.TEXT).apply { setPadding(0, dp(3), 0, 0) })
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                setOnClickListener {
+                    if (has) {
+                        client?.sendRequest(mapOf("op" to "fx", "id" to CustomAlarmSound.ID))
+                        animate().cancel(); alpha = .5f; animate().alpha(1f).setDuration(500).start()
+                    } else { dialog.dismiss(); addMySound() }
+                }
+                setOnLongClickListener { dialog.dismiss(); addMySound(); true }
+            }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), dp(4), dp(4), dp(8)) })
+        }
         class Tile(val id: String, val label: String, val description: String)
-        val effects = DeterrentSounds.Effect.entries.map { Tile(it.id, it.label, it.description) } +
-            (if (lastStatus["aac"] == "1") listOf(Tile(CustomAlarmSound.ID, CustomAlarmSound.LABEL, "Ton message ou ton fichier audio")) else emptyList())
+        val effects = DeterrentSounds.Effect.entries.map { Tile(it.id, it.label, it.description) }
         effects.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEach { effect ->
@@ -335,6 +360,19 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         dialog.show()
+    }
+
+    /** Enregistre ou importe « mon son », l’envoie à la caméra, puis rouvre le panneau pour le jouer. */
+    private fun addMySound() {
+        val cameraId = cameraKey
+        customSound.open("Mon son · ${title.text}", success = "Son envoyé à la caméra : touche « Mon son » pour le jouer.") { bytes, result ->
+            AutoAlarmUi.uploadCustom(this, cameraId, bytes, forAlarm = false) { state, error ->
+                runOnUiThread {
+                    if (state != null && !isDestroyed) { lastStatus = lastStatus + state; showSounds() }
+                }
+                result(error)
+            }
+        }
     }
 
     private fun showSoundCredits() {

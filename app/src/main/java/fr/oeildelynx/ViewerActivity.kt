@@ -171,12 +171,6 @@ class ViewerActivity : ComponentActivity() {
                         picked?.let { sendControls(camera.id, listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
                     }
                 })
-                // Essai du son choisi sur la caméra (la sirène se teste avec le bouton d’alarme ci-dessous).
-                val chosenSound = state["aas"] ?: MonitorService.SIREN
-                if (on && chosenSound != MonitorService.SIREN) card.addView(LynxUi.row(this, R.drawable.ic_play, "Tester le son sur la caméra",
-                    "Joue « ${MonitorService.autoAlarmSoundLabel(chosenSound)} » une fois, volume au maximum", chevron = false) {
-                    sendControls(camera.id, listOf(mapOf("op" to "fx", "id" to chosenSound)))
-                })
                 // Le compte à rebours d’armement se met à jour une fois écoulé.
                 val arming = state["aarm"]?.toLongOrNull() ?: 0
                 if (on && arming > 0 && armingRefresh.add(camera.id)) list.postDelayed({
@@ -215,8 +209,7 @@ class ViewerActivity : ComponentActivity() {
 
     /** Enregistre ou importe un son sur ce téléphone, l’envoie à la caméra et le choisit pour l’alarme. */
     private fun pickCustomSound(camera: PairingCode) {
-        customSound.open("Son personnalisé · ${camera.name}",
-            test = { sendControls(camera.id, listOf(mapOf("op" to "fx", "id" to CustomAlarmSound.ID))) }) { bytes, result ->
+        customSound.open("Son personnalisé · ${camera.name}") { bytes, result ->
             AutoAlarmUi.uploadCustom(this, camera.id, bytes) { state, error ->
                 runOnUiThread { if (state != null && !isDestroyed) { remoteState[camera.id] = state; refresh() } }
                 result(error)
