@@ -2,9 +2,9 @@
 
 Application Android de surveillance locale. Elle surveille les mouvements et les sons, enregistre un clip vidéo avec audio lorsqu’une activité est détectée, puis classe ce clip dans la galerie de l’application et dans les applications photo qui lisent les vidéos de la médiathèque Android.
 
-**Version publiée actuelle : `1.26.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
+**Version publiée actuelle : `1.28.0`** — APK signé disponible dans les [releases GitHub](https://github.com/DisColow/oeil-de-lynx/releases).
 
-Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.26.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
+Oui : on peut présenter le produit comme une première version stable « 1.0 ». Les APKs gardent leur numéro de release réel (`1.28.0` actuellement), car les versions antérieures ont déjà été publiées et Android utilise le numéro technique pour accepter les mises à jour.
 
 ## Fonctions
 
@@ -24,7 +24,7 @@ Oui : on peut présenter le produit comme une première version stable « 1.0 »
 - **Sons dissuasifs** : depuis le direct, bouton « Sons » : vrais enregistrements (chat en colère, feulement de chat, bombe d’air, aboiements, coups à la porte, sifflet, emballage froissé, corne de brume) et quelques sons synthétisés, joués au volume maximum sur le téléphone caméra pour détourner un chat d’une bêtise.
 - **Alarme à distance** : depuis le téléphone spectateur (liste des caméras ou direct), une sirène stridente retentit sur le téléphone caméra, volume au maximum, même en silencieux.
 - **Détection du son à distance** : activable ou désactivable depuis la liste des caméras du spectateur.
-- **Alarme automatique** (Réglages › Alarme automatique sur la caméra, ou depuis la liste des caméras du spectateur) : sur mouvement, sur son, ou les deux, la caméra joue elle-même la sirène (30 s) ou un son dissuasif au choix, au plus une fois par minute. Ses propres sons ne la redéclenchent pas ; rien en veille. **Délai d’armement d’1 minute** après chaque activation, au démarrage de la surveillance et à la sortie de veille (le temps de quitter la pièce) ; le compte à rebours est affiché chez le spectateur. À distance : interrupteur activer/désactiver, déclencheur et son sous chaque caméra (liste du spectateur) ou via le bouton **Alarme** du direct. **Arrêter sans désactiver** (« c’est bon, je gère ») : quand l’alarme automatique sonne, le spectateur reçoit une notification « Alarme déclenchée » avec un bouton **Arrêter l’alarme** (alertes de la caméra activées) ; le bouton Alarme du direct et « Arrêter l’alarme » de la liste font de même. Le son s’arrête, l’alarme reste active et pourra resonner une minute plus tard si ça bouge encore. **Son personnalisé** : à la place de la sirène ou d’un son intégré, un message enregistré au micro (20 s au plus) ou un fichier audio (3 Mo au plus, 30 s jouées), choisi sur le téléphone caméra (Réglages › Alarme automatique) ou envoyé depuis un spectateur (choix du son › « Enregistrer ou importer un son… ») ; il apparaît aussi dans le panneau Sons du direct.
+- **Alarme automatique** (Réglages › Alarme automatique sur la caméra, ou depuis la liste des caméras du spectateur) : sur mouvement, sur son, ou les deux, la caméra joue elle-même la sirène (30 s) ou un son dissuasif au choix, au plus une fois par minute. Ses propres sons ne la redéclenchent pas ; rien en veille. **Délai d’armement d’1 minute** après chaque activation, au démarrage de la surveillance et à la sortie de veille (le temps de quitter la pièce) ; le compte à rebours est affiché chez le spectateur. À distance : interrupteur activer/désactiver, déclencheur et son sous chaque caméra (liste du spectateur) ou via le bouton **Alarme** du direct. **Arrêter sans désactiver** (« c’est bon, je gère ») : quand l’alarme automatique sonne, le spectateur reçoit une notification « Alarme déclenchée » avec un bouton **Arrêter l’alarme** (alertes de la caméra activées) ; le bouton Alarme du direct et « Arrêter l’alarme » de la liste font de même. Le son s’arrête, l’alarme reste active et pourra resonner une minute plus tard si ça bouge encore. **Son personnalisé** : à la place de la sirène ou d’un son intégré, un message enregistré au micro (20 s au plus) ou un fichier audio (3 Mo au plus, 30 s jouées), choisi sur le téléphone caméra (Réglages › Alarme automatique) ou envoyé depuis un spectateur (choix du son › « Enregistrer ou importer un son… ») ; il apparaît aussi dans le panneau Sons du direct. **Mon son dans le direct** : en tête du panneau Sons, « ＋ Ajouter mon son » enregistre un message ou importe un fichier et l’envoie à la caméra sans changer le son de l’alarme ; ensuite « Mon son » le joue à volonté (appui long pour le remplacer).
 - **Réception automatique des clips** : sous chaque caméra, l’interrupteur « Recevoir les clips automatiquement » fait télécharger chaque nouveau clip sur le téléphone spectateur dès qu’il est terminé (Photos › Œil de Lynx et galerie de l’application), avec une notification. Seuls les clips enregistrés après l’activation sont envoyés ; après une coupure, les 10 derniers manqués sont rattrapés.
 - **Parler à travers la caméra** : bouton « Maintenir pour parler » dans le direct ; la voix sort du haut-parleur du téléphone caméra, volume au maximum.
 - **Image dans l’image** : bouton ▣ en haut du direct, ou automatiquement en quittant l’appli (Accueil) pendant le direct : la caméra reste visible dans une petite fenêtre au-dessus des autres applis, avec boutons pour couper/activer le son et arrêter l’alarme quand elle sonne. Fermer la petite fenêtre arrête le direct ; écran verrouillé, le flux s’interrompt et reprend au déverrouillage.
@@ -220,11 +220,11 @@ Les versions publiées suivent `X.Y.Z`. **Ne réutilisez jamais un tag existant 
 La release est entièrement compilée par GitHub Actions. Depuis un commit prêt à publier sur `main` :
 
 ```shell
-git tag v1.26.0
-git push origin v1.26.0
+git tag v1.28.0
+git push origin v1.28.0
 ```
 
-Remplacer `1.26.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
+Remplacer `1.28.0` par le prochain numéro non utilisé. Le workflow extrait le numéro depuis le tag, exécute les tests unitaires et Android Lint, compile `assembleRelease`, signe l’APK et le bundle Play, et les joint à une GitHub Release sous les noms `oeil-de-lynx-X.Y.Z.apk` et `oeil-de-lynx-X.Y.Z.aab`.
 
 Le workflow attend deux secrets Actions au niveau du dépôt :
 

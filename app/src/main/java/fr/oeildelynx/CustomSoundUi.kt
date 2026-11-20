@@ -24,6 +24,7 @@ import java.io.File
 internal class CustomSoundUi(private val activity: ComponentActivity) {
     private var deliver: ((ByteArray, (String?) -> Unit) -> Unit)? = null
     private var afterPermission: (() -> Unit)? = null
+    private var success = ""
 
     private val pickAudio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { sendFile(it) } }
     private val micPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -31,8 +32,10 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
         if (granted) next?.invoke() else toast("Le micro est nécessaire pour enregistrer un message.")
     }
 
-    fun open(title: String, deliver: (ByteArray, (String?) -> Unit) -> Unit) {
+    /** [success] : message affiché une fois le son enregistré. */
+    fun open(title: String, success: String = "Son personnalisé enregistré : il sera joué par l’alarme.", deliver: (ByteArray, (String?) -> Unit) -> Unit) {
         this.deliver = deliver
+        this.success = success
         LynxUi.sheet(activity, title, listOf(
             LynxUi.SheetItem(R.drawable.ic_mic, "Enregistrer un message", "20 secondes au plus, avec le micro de ce téléphone") { recordWithPermission() },
             LynxUi.SheetItem(R.drawable.ic_volume, "Choisir un fichier audio", "MP3, M4A, OGG… 3 Mo au plus, 30 s jouées au plus") { pickAudio.launch("audio/*") }
@@ -62,7 +65,7 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
         val target = deliver ?: return
         toast("Envoi du son…")
         target(bytes) { error ->
-            activity.runOnUiThread { toast(error ?: "Son personnalisé enregistré : il sera joué par l’alarme.") }
+            activity.runOnUiThread { toast(error ?: success) }
         }
     }
 

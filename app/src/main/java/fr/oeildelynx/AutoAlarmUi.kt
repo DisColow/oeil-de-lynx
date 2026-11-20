@@ -76,14 +76,15 @@ internal object AutoAlarmUi {
     }
 
     /**
-     * Envoie le son personnalisé à la caméra puis le choisit comme son de l’alarme (hors du thread principal).
-     * [done] reçoit l’état de la caméra, ou un message d’erreur.
+     * Envoie le son personnalisé à la caméra (hors du thread principal) ; [forAlarm] le choisit aussi comme
+     * son de l’alarme automatique. [done] reçoit l’état de la caméra, ou un message d’erreur.
      */
-    fun uploadCustom(context: Context, cameraId: String, bytes: ByteArray, done: (Map<String, String>?, String?) -> Unit) {
+    fun uploadCustom(context: Context, cameraId: String, bytes: ByteArray, forAlarm: Boolean = true, done: (Map<String, String>?, String?) -> Unit) {
         Thread {
             try {
                 LiveClient(context.applicationContext, cameraId, NO_LISTENER).openGallery().use { session ->
-                    session.uploadSound(bytes)
+                    val state = session.uploadSound(bytes)
+                    if (!forAlarm) { done(state, null); return@use }
                     val reply = session.request(mapOf("op" to "autoalarmsound", "value" to CustomAlarmSound.ID))
                     done(LiveProtocol.decodeFields(String(reply.payload, Charsets.UTF_8)), null)
                 }

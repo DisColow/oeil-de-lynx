@@ -467,6 +467,8 @@ class MonitorService : LifecycleService() {
                 onCustomSound = { bytes ->
                     CustomAlarmSound.save(this, bytes)?.let { throw java.io.IOException(it) }
                     Log.i(TAG, "Custom alarm sound received (${bytes.size} bytes)")
+                    // Le direct apprend tout de suite qu’un son personnalisé est disponible (panneau Sons).
+                    ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) publishLiveStatus() }
                     control(mapOf("op" to "settings"))
                 },
                 gallery = CaptureLibrary(applicationContext),
