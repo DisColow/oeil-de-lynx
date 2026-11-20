@@ -446,7 +446,13 @@ class MonitorService : LifecycleService() {
                         ContextCompat.getMainExecutor(this).execute { if (!shuttingDown) setExposure(value) }
                     } else if (request["op"] == "fx") {
                         // Son dissuasif choisi par un spectateur (feulement, bombe d’air…).
-                        playFx(request["id"])
+                        if (request["id"] == CustomAlarmSound.ID && CustomAlarmSound.exists(this)) {
+                            ownSoundUntil = SystemClock.elapsedRealtime() + CustomAlarmSound.MAX_PLAY_MS + 2_000
+                            board().playFile(CustomAlarmSound.file(this), CustomAlarmSound.MAX_PLAY_MS)
+                        } else DeterrentSounds.Effect.byId(request["id"])?.let { effect ->
+                            ownSoundUntil = SystemClock.elapsedRealtime() + 12_000
+                            board().play(effect)
+                        }
                     } else if (request["op"] == "meter") {
                         // Zone touchée dans le direct (x, y entre 0 et 1), ou reset=1 pour revenir en automatique.
                         val x = request["x"]?.toFloatOrNull(); val y = request["y"]?.toFloatOrNull()
@@ -633,19 +639,6 @@ class MonitorService : LifecycleService() {
             }?.let { setAutoAlarm(sound = it) }
             "threshold" -> request["value"]?.toIntOrNull()?.let { setStandbyThreshold(it) }
             "sound" -> setSoundTrigger(on)
-            "fx" -> playFx(request["id"]) // essai d’un son depuis la liste du spectateur
-        }
-    }
-
-    /** Son dissuasif (ou son personnalisé) joué à la demande d’un spectateur. */
-    private fun playFx(id: String?) {
-        if (id == CustomAlarmSound.ID) {
-            if (!CustomAlarmSound.exists(this)) { Log.w(TAG, "No custom sound to play"); return }
-            ownSoundUntil = SystemClock.elapsedRealtime() + CustomAlarmSound.MAX_PLAY_MS + 2_000
-            board().playFile(CustomAlarmSound.file(this), CustomAlarmSound.MAX_PLAY_MS)
-        } else DeterrentSounds.Effect.byId(id)?.let { effect ->
-            ownSoundUntil = SystemClock.elapsedRealtime() + 12_000
-            board().play(effect)
         }
     }
 
