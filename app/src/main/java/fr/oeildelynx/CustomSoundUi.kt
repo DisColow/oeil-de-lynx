@@ -23,19 +23,26 @@ import java.io.File
  */
 internal class CustomSoundUi(private val activity: ComponentActivity) {
     private var deliver: ((ByteArray, (String?) -> Unit) -> Unit)? = null
+    private var test: (() -> Unit)? = null
     private var afterPermission: (() -> Unit)? = null
 
-    private val pickAudio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { sendFile(it) } }
+    // OpenDocument plutôt que GetContent("audio/*") : certains fichiers (.opus, .ogg, mémos vocaux) ne sont pas
+    // typés « audio » par Android et restaient grisés. Le format est vérifié après le choix.
+    private val pickAudio = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { sendFile(it) } }
     private val micPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val next = afterPermission; afterPermission = null
         if (granted) next?.invoke() else toast("Le micro est nécessaire pour enregistrer un message.")
     }
 
-    fun open(title: String, deliver: (ByteArray, (String?) -> Unit) -> Unit) {
+    /** [test] (facultatif) fait jouer le son sur la caméra une fois envoyé. */
+    fun open(title: String, test: (() -> Unit)? = null, deliver: (ByteArray, (String?) -> Unit) -> Unit) {
         this.deliver = deliver
+        this.test = test
         LynxUi.sheet(activity, title, listOf(
             LynxUi.SheetItem(R.drawable.ic_mic, "Enregistrer un message", "20 secondes au plus, avec le micro de ce téléphone") { recordWithPermission() },
-            LynxUi.SheetItem(R.drawable.ic_volume, "Choisir un fichier audio", "MP3, M4A, OGG… 3 Mo au plus, 30 s jouées au plus") { pickAudio.launch("audio/*") }
+            LynxUi.SheetItem(R.drawable.ic_volume, "Choisir un fichier audio", "MP3, M4A, OGG… 3 Mo au plus, 30 s jouées au plus") {
+                pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/octet-stream", "video/mp4"))
+            }
         ))
     }
 
@@ -59,10 +66,23 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
     }
 
     private fun send(bytes: ByteArray) {
-        val target = deliver ?: return
+        val target = deliver ?: run { toast("Recommence depuis le choix du son."); return }
+        CustomAlarmSound.validate(activity, bytes)?.let { toast(it); return }
         toast("Envoi du son…")
         target(bytes) { error ->
-            activity.runOnUiThread { toast(error ?: "Son personnalisé enregistré : il sera joué par l’alarme.") }
+            activity.runOnUiThread {
+                if (activity.isDestroyed) return@runOnUiThread
+                if (error != null) {
+                    AlertDialog.Builder(activity).setTitle("Son non enregistré").setMessage(error).setPositiveButton("OK", null).show()
+                    return@runOnUiThread
+                }
+                val play = test
+                AlertDialog.Builder(activity).setTitle("Son personnalisé enregistré")
+                    .setMessage("Il est maintenant choisi comme son de l’alarme automatique.")
+                    .setPositiveButton("OK", null)
+                    .apply { if (play != null) setNeutralButton("Tester") { _, _ -> play() } }
+                    .show()
+            }
         }
     }
 
@@ -77,6 +97,7 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
         var recorder: MediaRecorder? = null
         var preview: MediaPlayer? = null
         var startedAt = 0L
+        var loudest = 0
         val dp = { v: Int -> LynxUi.dp(activity, v) }
         val status = LynxUi.body(activity, "Touche « Enregistrer » puis parle près du micro.", 14f, LynxUi.TEXT).apply { gravity = Gravity.CENTER }
         val timer = LynxUi.title(activity, "0:00", 34f).apply { gravity = Gravity.CENTER }
@@ -84,7 +105,8 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
         lateinit var dialog: AlertDialog
         val ticker = object : Runnable {
             override fun run() {
-                if (recorder == null) return
+                val r = recorder ?: return
+                loudest = maxOf(loudest, try { r.maxAmplitude } catch (_: Exception) { 0 })
                 val s = (SystemClock.elapsedRealtime() - startedAt) / 1000
                 timer.text = "0:%02d".format(s)
                 timer.postDelayed(this, 250)
@@ -96,8 +118,14 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
             try { r.stop() } catch (_: Exception) { file.delete() }
             r.release()
             recordLabel.text = "● Recommencer"
-            val ok = file.length() > 0
-            status.text = if (ok) "Message prêt. Écoute-le, puis utilise-le pour l’alarme." else "Enregistrement trop court, recommence."
+            // Micro occupé (surveillance en cours sur ce téléphone, appel…) : Android enregistre du silence.
+            val silent = loudest < 200
+            val ok = file.length() > 0 && !silent
+            status.text = when {
+                file.length() == 0L -> "Enregistrement trop court, recommence."
+                silent -> "Aucun son capté : le micro est sans doute occupé (surveillance en cours sur ce téléphone ?). Enregistre plutôt depuis le téléphone spectateur."
+                else -> "Message prêt. Écoute-le, puis utilise-le pour l’alarme."
+            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = ok
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = ok
         }
@@ -115,7 +143,7 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
                 r.setOnInfoListener { _, what, _ -> if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) activity.runOnUiThread { stopRecording() } }
                 r.prepare(); r.start()
             } catch (_: Exception) { r.release(); toast("Micro indisponible."); return }
-            recorder = r; startedAt = SystemClock.elapsedRealtime()
+            recorder = r; startedAt = SystemClock.elapsedRealtime(); loudest = 0
             recordLabel.text = "■ Arrêter"
             status.text = "Enregistrement… (20 s au plus)"
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false

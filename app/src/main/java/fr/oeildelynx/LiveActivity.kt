@@ -254,7 +254,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             val on = AutoAlarmUi.isOn(status)
             AutoAlarmUi.remember(this, cameraId, status["aa"])
             val onCustom = {
-                customSound.open("Son personnalisé · $name") { bytes, result ->
+                customSound.open("Son personnalisé · $name", test = { client?.sendRequest(mapOf("op" to "fx", "id" to CustomAlarmSound.ID)) }) { bytes, result ->
                     AutoAlarmUi.uploadCustom(this, cameraId, bytes) { _, error -> result(error) }
                 }
             }
