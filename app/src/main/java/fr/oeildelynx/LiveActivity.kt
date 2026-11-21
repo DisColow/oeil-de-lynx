@@ -265,10 +265,10 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
                 Toast.makeText(this, if (on) "Alarme automatique désactivée." else "Alarme automatique activée : elle s’arme dans 1 minute.", Toast.LENGTH_LONG).show()
             }
             items += LynxUi.SheetItem(R.drawable.ic_tune, "Déclencheur de l’alarme automatique",
-                MonitorService.AUTO_ALARM_LABELS[status["aa"]] ?: "Désactivée") { AutoAlarmUi.chooseMode(this, name, status, onCustom, send) }
+                MonitorService.AUTO_ALARM_LABELS[status["aa"]] ?: "Désactivée") { AutoAlarmUi.chooseMode(this, name, status, onCustom, SoundPreview.customCopy(this, cameraId), send) }
             items += LynxUi.SheetItem(R.drawable.ic_volume, "Son de l’alarme automatique",
                 MonitorService.autoAlarmSoundLabel(status["aas"] ?: MonitorService.SIREN)) {
-                AutoAlarmUi.chooseSound(this, name, status, onCustom) { picked ->
+                AutoAlarmUi.chooseSound(this, name, status, onCustom, SoundPreview.customCopy(this, cameraId)) { picked ->
                     picked?.let { send(listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
                 }
             }
@@ -299,7 +299,13 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         box.addView(View(this).apply { background = LynxUi.rounded(this@LiveActivity, LynxUi.OUTLINE, 3) },
             LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(14) })
         box.addView(LynxUi.title(this, "Sons sur la caméra", 18f))
-        box.addView(LynxUi.body(this, "Joués au volume maximum, même en silencieux. Toucher pour jouer.", 12.5f).apply { setPadding(0, dp(4), 0, dp(12)) })
+        box.addView(LynxUi.body(this, "Toucher un son le joue sur la caméra, au volume maximum, même en silencieux. " +
+            "🎧 l’écoute d’abord sur ce téléphone.", 12.5f).apply { setPadding(0, dp(4), 0, dp(12)) })
+        val listenHere = { id: String ->
+            if (!preview.play(id, SoundPreview.customCopy(this, cameraKey))) Toast.makeText(this,
+                "Écoute indisponible ici : ce son a été envoyé depuis un autre téléphone.", Toast.LENGTH_LONG).show()
+        }
+        dialog.setOnDismissListener { preview.stop() }
         // Son personnalisé en tête : le jouer s’il existe (appui long pour le changer), sinon en ajouter un.
         // (Caméras 1.25.0 et plus, qui annoncent « aac ».)
         if (lastStatus["aac"] != null) {
@@ -318,6 +324,7 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
                     addView(LynxUi.body(this@LiveActivity, if (has) "Toucher pour jouer · appui long pour le changer"
                         else "Enregistre un message ou choisis un fichier audio, puis joue-le quand tu veux", 11.5f, LynxUi.TEXT).apply { setPadding(0, dp(3), 0, 0) })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
+                if (has) addView(LynxUi.iconButton(this@LiveActivity, R.drawable.ic_headphones, "Écouter mon son ici", 0x40000000, 40) { listenHere(CustomAlarmSound.ID) })
                 setOnClickListener {
                     if (has) {
                         client?.sendRequest(mapOf("op" to "fx", "id" to CustomAlarmSound.ID))
@@ -333,11 +340,15 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEach { effect ->
                 row.addView(LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(12), dp(12))
+                    orientation = LinearLayout.HORIZONTAL; setPadding(dp(14), dp(10), dp(6), dp(12))
                     background = LynxUi.pressable(this@LiveActivity, LynxUi.CARD_HIGH, 16)
-                    contentDescription = effect.label
-                    addView(TextView(this@LiveActivity).apply { text = effect.label; textSize = 14.5f; setTextColor(LynxUi.TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
-                    addView(LynxUi.body(this@LiveActivity, effect.description, 11.5f).apply { setPadding(0, dp(3), 0, 0) })
+                    contentDescription = "Jouer ${effect.label} sur la caméra"
+                    addView(LinearLayout(this@LiveActivity).apply {
+                        orientation = LinearLayout.VERTICAL; setPadding(0, dp(2), dp(4), 0)
+                        addView(TextView(this@LiveActivity).apply { text = effect.label; textSize = 14.5f; setTextColor(LynxUi.TEXT); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
+                        addView(LynxUi.body(this@LiveActivity, effect.description, 11.5f).apply { setPadding(0, dp(3), 0, 0) })
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(LynxUi.iconButton(this@LiveActivity, R.drawable.ic_headphones, "Écouter ${effect.label} ici", 0x40000000, 36) { listenHere(effect.id) })
                     setOnClickListener {
                         client?.sendRequest(mapOf("op" to "fx", "id" to effect.id))
                         // Retour visuel bref : le son part sur la caméra, rien ne se joue ici.
@@ -361,6 +372,8 @@ class LiveActivity : ComponentActivity(), LiveClient.Listener {
         }
         dialog.show()
     }
+
+    private val preview by lazy { SoundPreview(this) }
 
     /** Enregistre ou importe « mon son », l’envoie à la caméra, puis rouvre le panneau pour le jouer. */
     private fun addMySound() {

@@ -151,7 +151,8 @@ class ViewerActivity : ComponentActivity() {
                     setPadding(dp(16), dp(12), dp(12), dp(12))
                     background = LynxUi.pressable(this@ViewerActivity, 0x00000000, 20)
                     contentDescription = "Alarme automatique"
-                    setOnClickListener { AutoAlarmUi.chooseMode(this@ViewerActivity, camera.name, state, { pickCustomSound(camera) }) { sendControls(camera.id, it) } }
+                    setOnClickListener { AutoAlarmUi.chooseMode(this@ViewerActivity, camera.name, state, { pickCustomSound(camera) },
+                        SoundPreview.customCopy(this@ViewerActivity, camera.id)) { sendControls(camera.id, it) } }
                 }
                 autoRow.addView(LynxUi.icon(this, R.drawable.ic_shield, if (on) LynxUi.DANGER else LynxUi.MUTED, 22))
                 autoRow.addView(LinearLayout(this).apply {
@@ -167,7 +168,7 @@ class ViewerActivity : ComponentActivity() {
                 card.addView(autoRow)
                 if (on) card.addView(LynxUi.row(this, R.drawable.ic_volume, "Son de l’alarme automatique",
                     MonitorService.autoAlarmSoundLabel(state["aas"] ?: MonitorService.SIREN)) {
-                    AutoAlarmUi.chooseSound(this, camera.name, state, { pickCustomSound(camera) }) { picked ->
+                    AutoAlarmUi.chooseSound(this, camera.name, state, { pickCustomSound(camera) }, SoundPreview.customCopy(this, camera.id)) { picked ->
                         picked?.let { sendControls(camera.id, listOf(mapOf("op" to "autoalarmsound", "value" to it))) }
                     }
                 })

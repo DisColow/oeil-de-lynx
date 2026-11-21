@@ -541,7 +541,7 @@ class MainActivity : ComponentActivity() {
         val state = mapOf(
             "aas" to (prefs.getString(MonitorService.PREF_AUTO_ALARM_SOUND, MonitorService.SIREN) ?: MonitorService.SIREN),
             "aac" to if (CustomAlarmSound.exists(this)) "1" else "0")
-        AutoAlarmUi.chooseSound(this, LiveCamera.name(this), state, { pickCustomSound() }) { picked ->
+        AutoAlarmUi.chooseSound(this, LiveCamera.name(this), state, { pickCustomSound() }, CustomAlarmSound.file(this)) { picked ->
             picked?.let { applyAutoAlarm("autoalarmsound", it, MonitorService.PREF_AUTO_ALARM_SOUND) }
         }
     }
