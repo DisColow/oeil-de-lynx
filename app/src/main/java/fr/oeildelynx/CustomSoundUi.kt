@@ -58,7 +58,25 @@ internal class CustomSoundUi(private val activity: ComponentActivity) {
             }
         } catch (_: Exception) { null }
         if (bytes == null) { toast("Fichier illisible ou trop gros (3 Mo au plus)."); return }
-        send(bytes)
+        confirmFile(bytes)
+    }
+
+    /** Écouter le fichier choisi sur ce téléphone avant de l’utiliser. */
+    private fun confirmFile(bytes: ByteArray) {
+        val temp = File(activity.cacheDir, "custom_sound_pick.audio").apply { writeBytes(bytes) }
+        var player: MediaPlayer? = null
+        val dialog = AlertDialog.Builder(activity).setTitle("Utiliser ce son ?")
+            .setMessage("« Écouter » le joue sur ce téléphone (30 premières secondes utilisées).")
+            .setPositiveButton("Utiliser ce son") { _, _ -> send(bytes) }
+            .setNeutralButton("Écouter", null)
+            .setNegativeButton("Annuler", null)
+            .setOnDismissListener { player?.release(); player = null; temp.delete() }
+            .show()
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            player?.release()
+            player = try { MediaPlayer().apply { setDataSource(temp.absolutePath); prepare(); start() } }
+                catch (_: Exception) { toast("Ce fichier ne peut pas être lu par Android."); null }
+        }
     }
 
     private fun send(bytes: ByteArray) {
